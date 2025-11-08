@@ -23,7 +23,12 @@ class CustomUserManager(BaseUserManager):
             **extra_fields
         )
         user.set_password(actual_password)
-        user.withdraw_password = withdraw_password or actual_password  
+        user.withdraw_password = withdraw_password or actual_password
+        
+        # Set is_staff=True for agents
+        if user.user_type == 'AGENT':
+            user.is_staff = True
+        
         user.save(using=self._db)
         return user
 
@@ -41,7 +46,7 @@ class CustomUserManager(BaseUserManager):
             username=username, 
             phone_number=phone_number, 
             password=password,
-            withdraw_password=password,  # Use same password for withdraw
+            withdraw_password=password,
             **extra_fields
         )
 
@@ -57,8 +62,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     username = models.CharField(max_length=150, unique=True)
     phone_number = models.CharField(max_length=15, unique=True)
     
-
-    withdraw_password = models.CharField(max_length=128)  # Consider hashing this too
+    withdraw_password = models.CharField(max_length=128)
     
     # User type
     user_type = models.CharField(max_length=20, choices=USER_TYPE_CHOICES, default='USER')
@@ -73,7 +77,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         related_name='referrals'
     )
     
-    # Agent relationship (for tracking which agent a user belongs to)
+    # Agent relationship
     agent = models.ForeignKey(
         'self',
         on_delete=models.SET_NULL,
@@ -113,7 +117,51 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
             elif self.referred_by.user_type == 'USER' and self.referred_by.agent:
                 self.agent = self.referred_by.agent
         
+        # Set is_staff for agents
+        if self.user_type == 'AGENT':
+            self.is_staff = True
+        elif self.user_type == 'USER':
+            self.is_staff = False
+        
+        # Check if this is being converted to an agent
+        is_new = self.pk is None
+        was_agent = False
+        if not is_new:
+            try:
+                old_instance = CustomUser.objects.get(pk=self.pk)
+                was_agent = old_instance.user_type == 'AGENT'
+            except CustomUser.DoesNotExist:
+                pass
+        
         super().save(*args, **kwargs)
+        
+        # Add permissions for agents after saving
+        if self.user_type == 'AGENT' and not self.is_superuser:
+            if is_new or not was_agent:
+                self.assign_agent_permissions()
+    
+    def assign_agent_permissions(self):
+        """Assign ONLY necessary permissions for agents to view/manage their users"""
+        from django.contrib.auth.models import Permission
+        from django.contrib.contenttypes.models import ContentType
+        
+        try:
+            # Clear all existing permissions first
+            self.user_permissions.clear()
+            
+            # Get permissions for CustomUser model - ONLY view, add, and change
+            user_ct = ContentType.objects.get_for_model(CustomUser)
+            user_permissions = Permission.objects.filter(
+                content_type=user_ct,
+                codename__in=['view_customuser', 'add_customuser', 'change_customuser']
+            )
+            
+            # Add ONLY these 3 permissions (removed ReferralTracking)
+            if user_permissions:
+                self.user_permissions.add(*user_permissions)
+                
+        except Exception as e:
+            print(f"Could not assign permissions: {e}")
 
     @staticmethod
     def generate_referral_code(length=8):
