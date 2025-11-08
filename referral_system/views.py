@@ -3,13 +3,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.db.models import Count, Q
-from .models import CustomUser, ReferralTracking
+from .models import CustomUser, ReferralTracking, Record
 from   .serializers import (
     UserRegistrationSerializer,
     UserLoginSerializer,
     UserSerializer,
     AgentCreationSerializer,
-    ReferralTrackingSerializer
+    ReferralTrackingSerializer,
+    UserRecordSerializer
 )
 
 
@@ -274,3 +275,44 @@ class ValidateReferralCodeView(APIView):
                 {'valid': False, 'message': 'Invalid referral code'},
                 status=status.HTTP_404_NOT_FOUND
             )
+class UserRecordImagesView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        level = request.user.level
+        if not level and request.user.agent:
+            level = request.user.agent.level
+
+        if not level:
+            return Response({
+                'total_records': 0,
+                'user_level': None,
+                'records': []
+            }, status=status.HTTP_200_OK)
+
+        records = (
+            Record.objects
+            .filter(level=level, status='PENDING')
+            .select_related('level', 'created_by')
+            .order_by('title')
+        )
+
+        serializer = UserRecordSerializer(
+            records,
+            many=True,
+            context={'request': request}
+        )
+
+        user_level = {
+            'id': str(level.id),
+            'name': level.name,
+            'display_name': level.display_name,
+            'image_upload_limit': level.image_upload_limit,
+            'commission_rate': str(level.commission_rate),
+        }
+
+        return Response({
+            'total_records': records.count(),
+            'user_level': user_level,
+            'records': serializer.data
+        }, status=status.HTTP_200_OK)

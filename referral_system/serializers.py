@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import authenticate
-from .models import CustomUser, ReferralTracking
+from .models import CustomUser, ReferralTracking, Record
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
@@ -199,3 +199,49 @@ class ReferralTrackingSerializer(serializers.ModelSerializer):
             'agent_username',
             'created_at'
         ]
+
+
+class UserRecordSerializer(serializers.ModelSerializer):
+    level = serializers.SerializerMethodField()
+    image_url = serializers.SerializerMethodField()
+    created_by = serializers.CharField(source='created_by.username', read_only=True, allow_null=True)
+
+    class Meta:
+        model = Record
+        fields = [
+            'id',
+            'title',
+            'description',
+            'price',
+            'commission',
+            'commission_percentage',
+            'total_value',
+            'status',
+            'created_at',
+            'updated_at',
+            'completed_at',
+            'level',
+            'image_url',
+            'created_by',
+        ]
+        read_only_fields = fields
+
+    def get_level(self, obj):
+        level = getattr(obj, 'level', None)
+        if not level:
+            return None
+        return {
+            'id': str(level.id),
+            'name': level.name,
+            'display_name': level.display_name,
+            'image_upload_limit': level.image_upload_limit,
+            'commission_rate': str(level.commission_rate),
+        }
+
+    def get_image_url(self, obj):
+        if not obj.image:
+            return None
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(obj.image.url)
+        return obj.image.url

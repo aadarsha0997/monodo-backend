@@ -10,7 +10,8 @@ from .views import (
     MyReferralsView,
     ReferralTrackingListView,
     DashboardStatsView,
-    ValidateReferralCodeView
+    ValidateReferralCodeView,
+    UserRecordImagesView
 )
 
 urlpatterns = [
@@ -34,4 +35,7 @@ urlpatterns = [
     
     # Dashboard
     path('dashboard/stats/', DashboardStatsView.as_view(), name='dashboard-stats'),
+
+    # Record images
+    path('records/images/', UserRecordImagesView.as_view(), name='user-record-images'),
 ]
