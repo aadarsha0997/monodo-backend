@@ -164,3 +164,95 @@ class ReferralTracking(models.Model):
             elif self.referrer.agent:
                 self.agent = self.referrer.agent
         super().save(*args, **kwargs)
+
+
+
+
+class Record(models.Model):
+    """Track bookings/tours with commission and status"""
+    STATUS_CHOICES = (
+        ('PENDING', 'Pending'),
+        ('COMPLETED', 'Completed'),
+        ('CANCELLED', 'Cancelled'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # User who created/owns this record
+    user = models.ForeignKey(
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name='records'
+    )
+    
+    # Agent associated with this record
+    agent = models.ForeignKey(
+        CustomUser,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='agent_records',
+        limit_choices_to={'user_type': 'AGENT'}
+    )
+    
+    # Tour/Booking details
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True, null=True)
+    image = models.URLField(max_length=500, blank=True, null=True)
+    
+    # Financial details
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    commission = models.DecimalField(max_digits=10, decimal_places=2)
+    total_value = models.DecimalField(max_digits=10, decimal_places=2)
+    
+    # Commission percentage (optional - for tracking)
+    commission_percentage = models.DecimalField(
+        max_digits=5, 
+        decimal_places=2, 
+        default=0,
+        help_text="Commission percentage (e.g., 7.00 for 7%)"
+    )
+    
+    # Status
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='PENDING'
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        db_table = 'records'
+        verbose_name = 'Record'
+        verbose_name_plural = 'Records'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', '-created_at']),
+            models.Index(fields=['user', 'status']),
+            models.Index(fields=['agent', 'status']),
+        ]
+
+    def __str__(self):
+        return f"{self.title} - {self.user.username} - {self.status}"
+
+    def save(self, *args, **kwargs):
+        # Auto-assign agent from user
+        if not self.agent and self.user.agent:
+            self.agent = self.user.agent
+        
+        # Auto-calculate total value
+        self.total_value = self.price + self.commission
+        
+        # Auto-calculate commission percentage if not set
+        if self.commission and self.price and not self.commission_percentage:
+            self.commission_percentage = (self.commission / self.price) * 100
+        
+        # Set completed_at timestamp when status changes to COMPLETED
+        if self.status == 'COMPLETED' and not self.completed_at:
+            self.completed_at = timezone.now()
+        
+        super().save(*args, **kwargs)
