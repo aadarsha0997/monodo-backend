@@ -2,8 +2,10 @@ from rest_framework import status, generics, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.db.models import Count, Q
-from .models import CustomUser, ReferralTracking, Record
+from django.db.models import Count, Q, Prefetch
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
+from .models import CustomUser, ReferralTracking, Record, LoginActivity, Level, Review
 from   .serializers import (
     UserRegistrationSerializer,
     UserLoginSerializer,
@@ -12,6 +14,109 @@ from   .serializers import (
     ReferralTrackingSerializer,
     UserRecordSerializer
 )
+
+def get_client_ip(request):
+    """Retrieve the client IP address from request headers."""
+    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if x_forwarded_for:
+        ip = x_forwarded_for.split(',')[0].strip()
+        if ip:
+            return ip
+    return request.META.get('REMOTE_ADDR')
+
+
+def parse_user_agent(user_agent):
+    """Crude user-agent parsing to extract browser, OS and device type."""
+    if not user_agent:
+        return 'Unknown', 'Unknown', 'unknown'
+
+    ua = user_agent.lower()
+
+    browser = 'Unknown'
+    if 'chrome' in ua and 'edge' not in ua:
+        browser = 'Chrome'
+    elif 'safari' in ua and 'chrome' not in ua:
+        browser = 'Safari'
+    elif 'firefox' in ua:
+        browser = 'Firefox'
+    elif 'edge' in ua:
+        browser = 'Edge'
+    elif 'msie' in ua or 'trident' in ua:
+        browser = 'Internet Explorer'
+    elif 'opera' in ua or 'opr' in ua:
+        browser = 'Opera'
+
+    os_name = 'Unknown'
+    if 'windows' in ua:
+        os_name = 'Windows'
+    elif 'mac os x' in ua or 'macintosh' in ua:
+        os_name = 'macOS'
+    elif 'android' in ua:
+        os_name = 'Android'
+    elif 'iphone' in ua or 'ipad' in ua or 'ios' in ua:
+        os_name = 'iOS'
+    elif 'linux' in ua:
+        os_name = 'Linux'
+
+    device_type = 'desktop'
+    mobile_keywords = ['iphone', 'android', 'mobile', 'blackberry', 'phone']
+    tablet_keywords = ['ipad', 'tablet', 'nexus 7', 'nexus 10']
+
+    if any(keyword in ua for keyword in tablet_keywords):
+        device_type = 'tablet'
+    elif any(keyword in ua for keyword in mobile_keywords):
+        device_type = 'mobile'
+    elif 'bot' in ua or 'crawl' in ua or 'spider' in ua:
+        device_type = 'bot'
+
+    return browser or 'Unknown', os_name or 'Unknown', device_type
+
+
+def record_login_activity(request, user):
+    """Persist login activity metadata for auditing."""
+    try:
+        user_agent = request.META.get('HTTP_USER_AGENT', '')
+        browser, os_name, device_type = parse_user_agent(user_agent)
+        ip_address = get_client_ip(request)
+
+        accept_language = request.META.get('HTTP_ACCEPT_LANGUAGE')
+        referrer = request.META.get('HTTP_REFERER')
+
+        device_time_str = request.headers.get('X-Device-Time') or request.META.get('HTTP_X_DEVICE_TIME')
+        device_time = parse_datetime(device_time_str) if device_time_str else None
+        if device_time and device_time.tzinfo is None:
+            device_time = timezone.make_aware(device_time, timezone.get_current_timezone())
+
+        location = request.headers.get('X-Device-Location') or request.META.get('HTTP_X_DEVICE_LOCATION') or 'Unknown'
+
+        extra_metadata = {
+            'forwarded_for': request.META.get('HTTP_X_FORWARDED_FOR'),
+            'real_ip': request.META.get('HTTP_X_REAL_IP'),
+            'host': request.get_host(),
+            'request_path': request.path,
+            'http_accept': request.META.get('HTTP_ACCEPT'),
+            'content_type': request.META.get('CONTENT_TYPE'),
+        }
+
+        session_key = getattr(request.session, 'session_key', None)
+
+        LoginActivity.objects.create(
+            user=user,
+            ip_address=ip_address,
+            location=location,
+            user_agent=user_agent,
+            browser=browser or 'Unknown',
+            operating_system=os_name or 'Unknown',
+            device_type=device_type or 'unknown',
+            accept_language=accept_language,
+            session_key=session_key,
+            referrer=referrer,
+            device_time=device_time,
+            extra_metadata=extra_metadata
+        )
+    except Exception as exc:
+        # Avoid breaking login flow if logging fails
+        print(f"Failed to record login activity for {user.username}: {exc}")
 
 
 class UserRegistrationView(APIView):
@@ -55,6 +160,9 @@ class UserLoginView(APIView):
             
             # Generate JWT tokens
             refresh = RefreshToken.for_user(user)
+
+            # Record login activity
+            record_login_activity(request, user)
             
             return Response({
                 'message': 'Login successful',
@@ -280,22 +388,37 @@ class UserRecordImagesView(APIView):
 
     def get(self, request):
         level = request.user.level
-        if not level and request.user.agent:
-            level = request.user.agent.level
 
         if not level:
-            return Response({
-                'total_records': 0,
-                'user_level': None,
-                'records': []
-            }, status=status.HTTP_200_OK)
+            agent = getattr(request.user, 'agent', None)
+            if agent and agent.level:
+                level = agent.level
+            else:
+                level = Level.get_default_level()
 
-        records = (
-            Record.objects
-            .filter(level=level, status='PENDING')
-            .select_related('level', 'created_by')
-            .order_by('title')
-        )
+        if not level:
+            return Response(
+                {
+                    'total_records': 0,
+                    'user_level': None,
+                    'records': []
+                },
+                status=status.HTTP_200_OK
+            )
+
+        records = Record.objects.filter(
+            level=level,
+            status='PENDING'
+        ).select_related(
+            'level',
+            'created_by'
+        ).prefetch_related(
+            Prefetch(
+                'reviews',
+                queryset=Review.objects.filter(is_active=True).order_by('-created_at'),
+                to_attr='active_reviews'
+            )
+        ).order_by('title')
 
         serializer = UserRecordSerializer(
             records,

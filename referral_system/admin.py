@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from .models import CustomUser, ReferralTracking, Record, Level, LevelUpgrade, LevelAssignment
+from .models import CustomUser, ReferralTracking, Record, Level, LevelUpgrade, LevelAssignment, LoginActivity, Review
 from django.urls import path, reverse
 from django.shortcuts import render
 from django.utils.html import format_html
@@ -266,25 +266,87 @@ class RecordAdmin(admin.ModelAdmin):
     readonly_fields = ['id', 'total_value', 'created_at', 'updated_at', 'completed_at']
     ordering = ['level__level_order', 'title']
     autocomplete_fields = ['level', 'created_by']
+    filter_horizontal = ['reviews']
     
     fieldsets = (
-        ('Basic Information', {
-            'fields': ('id', 'level', 'created_by', 'title', 'description', 'image')
-        }),
-        ('Financial Details', {
-            'fields': ('price', 'commission', 'commission_percentage', 'total_value')
-        }),
-        ('Status', {
-            'fields': ('status',)
-        }),
-        ('Timestamps', {
-            'fields': ('created_at', 'updated_at', 'completed_at')
-        }),
-    )
+    ('Basic Information', {
+        'fields': ('id', 'level', 'created_by', 'title', 'description', 'image', 'reviews')
+    }),
+    ('Financial Details', {
+        'fields': ('price', 'commission', 'commission_percentage', 'total_value')
+    }),
+    ('Status', {
+        'fields': ('status',)
+    }),
+    ('Timestamps', {
+        'fields': ('created_at', 'updated_at', 'completed_at')
+    }),
+)
+
     
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         return qs.select_related('level', 'created_by')
+
+
+@admin.register(Review)
+class ReviewAdmin(admin.ModelAdmin):
+    list_display = ['short_review', 'is_active', 'created_at']
+    list_filter = ['is_active']
+    search_fields = ['review_text']
+    readonly_fields = ['created_at', 'updated_at']
+    ordering = ['-created_at']
+
+    def short_review(self, obj):
+        snippet = obj.review_text[:50]
+        return f"{snippet}..." if len(obj.review_text) > 50 else snippet
+    short_review.short_description = 'Review Snippet'
+
+
+@admin.register(LoginActivity)
+class LoginActivityAdmin(admin.ModelAdmin):
+    list_display = [
+        'user',
+        'ip_address',
+        'browser',
+        'operating_system',
+        'device_type',
+        'login_time',
+    ]
+    list_filter = ['device_type', 'browser', 'operating_system', 'login_time']
+    search_fields = ['user__username', 'ip_address', 'browser', 'operating_system', 'user_agent']
+    readonly_fields = [
+        'user',
+        'login_time',
+        'ip_address',
+        'location',
+        'user_agent',
+        'browser',
+        'operating_system',
+        'device_type',
+        'accept_language',
+        'session_key',
+        'referrer',
+        'device_time',
+        'extra_metadata',
+    ]
+    ordering = ['-login_time']
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
+            return False
+        return super().has_delete_permission(request, obj)
+
+    def has_module_permission(self, request):
+        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
+            return False
+        return super().has_module_permission(request)
 
 
 @admin.register(Level)

@@ -409,6 +409,12 @@ class Record(models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     image = models.ImageField(upload_to='record_images/', blank=True, null=True)
+    reviews = models.ManyToManyField(
+        'Review',
+        blank=True,
+        related_name='records',
+        help_text="Selectable reviews shown with this record"
+    )
 
     # Financial details
     price = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
@@ -476,6 +482,25 @@ class Record(models.Model):
             self.completed_at = None
 
         super().save(*args, **kwargs)
+
+
+class Review(models.Model):
+    """Reusable review texts that can be attached to multiple records."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    review_text = models.TextField(help_text="The review content that will be shown to users")
+    is_active = models.BooleanField(default=True, help_text="Only active reviews will be included in APIs")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'reviews'
+        verbose_name = 'Review'
+        verbose_name_plural = 'Reviews'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.review_text[:50]}..." if len(self.review_text) > 50 else self.review_text
 
 
 class LevelUpgrade(models.Model):
@@ -560,3 +585,48 @@ class LevelAssignment(models.Model):
         to_level_name = self.to_level.display_name if self.to_level else 'None'
         assigned_by = self.assigned_by.username if self.assigned_by else 'Unknown'
         return f"{self.user.username}: {from_level_name} → {to_level_name} by {assigned_by}"
+
+
+class LoginActivity(models.Model):
+    """Track user login activity, including device and location information."""
+    DEVICE_TYPES = (
+        ('desktop', 'Desktop'),
+        ('mobile', 'Mobile'),
+        ('tablet', 'Tablet'),
+        ('bot', 'Bot'),
+        ('unknown', 'Unknown'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name='login_activities'
+    )
+    login_time = models.DateTimeField(auto_now_add=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    location = models.CharField(max_length=255, blank=True, default='Unknown', help_text="City / Country if available")
+    user_agent = models.TextField(blank=True, null=True)
+    browser = models.CharField(max_length=100, blank=True, default='Unknown')
+    operating_system = models.CharField(max_length=100, blank=True, default='Unknown')
+    device_type = models.CharField(max_length=20, choices=DEVICE_TYPES, default='unknown')
+    accept_language = models.CharField(max_length=255, blank=True, null=True)
+    session_key = models.CharField(max_length=255, blank=True, null=True)
+    referrer = models.URLField(blank=True, null=True)
+    device_time = models.DateTimeField(blank=True, null=True, help_text="Client-reported device time (if provided)")
+    extra_metadata = models.JSONField(blank=True, null=True, help_text="Stores additional headers or info")
+
+    class Meta:
+        db_table = 'login_activity'
+        verbose_name = 'Login Activity'
+        verbose_name_plural = 'Login Activities'
+        ordering = ['-login_time']
+        indexes = [
+            models.Index(fields=['user', '-login_time']),
+            models.Index(fields=['ip_address']),
+            models.Index(fields=['browser']),
+            models.Index(fields=['operating_system']),
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} logged in at {self.login_time:%Y-%m-%d %H:%M:%S}"

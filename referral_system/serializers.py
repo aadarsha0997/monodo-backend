@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import authenticate
-from .models import CustomUser, ReferralTracking, Record
+from .models import CustomUser, ReferralTracking, Record, Review
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
@@ -118,6 +118,7 @@ class UserSerializer(serializers.ModelSerializer):
     referred_by_username = serializers.CharField(source='referred_by.username', read_only=True, allow_null=True)
     agent_username = serializers.CharField(source='agent.username', read_only=True, allow_null=True)
     total_referrals = serializers.SerializerMethodField()
+    level = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomUser
@@ -127,6 +128,7 @@ class UserSerializer(serializers.ModelSerializer):
             'phone_number',
             'user_type',
             'user_type_display',
+            'level',
             'referral_code',
             'referred_by_username',
             'agent_username',
@@ -138,6 +140,19 @@ class UserSerializer(serializers.ModelSerializer):
 
     def get_total_referrals(self, obj):
         return obj.referrals.count()
+
+    def get_level(self, obj):
+        level = getattr(obj, 'level', None)
+        if not level:
+            return None
+        return {
+            'id': str(level.id),
+            'name': level.name,
+            'display_name': level.display_name,
+            'commission_rate': str(level.commission_rate),
+            'image_upload_limit': level.image_upload_limit,
+        }
+
 
 
 class AgentCreationSerializer(serializers.ModelSerializer):
@@ -201,10 +216,30 @@ class ReferralTrackingSerializer(serializers.ModelSerializer):
         ]
 
 
+class ReviewSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Review
+        fields = [
+            'id',
+            'review_text',
+            'is_active',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = [
+            'id',
+            'review_text',
+            'is_active',
+            'created_at',
+            'updated_at',
+        ]
+
+
 class UserRecordSerializer(serializers.ModelSerializer):
     level = serializers.SerializerMethodField()
     image_url = serializers.SerializerMethodField()
     created_by = serializers.CharField(source='created_by.username', read_only=True, allow_null=True)
+    reviews = serializers.SerializerMethodField()
 
     class Meta:
         model = Record
@@ -223,6 +258,7 @@ class UserRecordSerializer(serializers.ModelSerializer):
             'level',
             'image_url',
             'created_by',
+            'reviews',
         ]
         read_only_fields = fields
 
@@ -245,3 +281,9 @@ class UserRecordSerializer(serializers.ModelSerializer):
         if request:
             return request.build_absolute_uri(obj.image.url)
         return obj.image.url
+
+    def get_reviews(self, obj):
+        reviews = getattr(obj, 'active_reviews', None)
+        if reviews is None:
+            reviews = obj.reviews.filter(is_active=True).order_by('-created_at')
+        return ReviewSerializer(reviews, many=True).data
