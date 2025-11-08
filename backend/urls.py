@@ -22,5 +22,5 @@ from django.conf import settings
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/',include("HomePage.urls"))
+    path('api/v1/', include('referral_system.urls')), 
 ]+static(settings.MEDIA_URL,document_root=settings.MEDIA_ROOT)
