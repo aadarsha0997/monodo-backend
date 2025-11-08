@@ -1,6 +1,10 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .models import CustomUser, ReferralTracking, Record, Level, LevelUpgrade, LevelAssignment
+from django.urls import path, reverse
+from django.shortcuts import render
+from django.utils.html import format_html
+from .models import CustomUser, ReferralTracking
 
 
 @admin.register(CustomUser)
@@ -58,32 +62,168 @@ class CustomUserAdmin(BaseUserAdmin):
     
     readonly_fields = ['date_joined', 'last_login', 'referral_code']
     
+    def get_urls(self):
+        """Add custom URL for agent profile"""
+        urls = super().get_urls()
+        custom_urls = [
+            path('my-profile/', self.admin_site.admin_view(self.agent_profile_view), name='referral_system_customuser_myprofile'),
+        ]
+        return custom_urls + urls
+    
+    def agent_profile_view(self, request):
+        """Custom view for agent to see their own profile"""
+        agent = request.user
+        
+        # Count total referred users
+        total_users = CustomUser.objects.filter(agent=agent).count()
+        
+        context = {
+            **self.admin_site.each_context(request),
+            'agent': agent,
+            'total_users': total_users,
+            'title': 'My Profile',
+            'site_title': self.admin_site.site_title,
+            'site_header': self.admin_site.site_header,
+            'has_permission': True,
+        }
+        
+        return render(request, 'admin/agent_profile.html', context)
+    
+    def changelist_view(self, request, extra_context=None):
+        """Add message at the top for agents"""
+        extra_context = extra_context or {}
+        
+        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
+            # Add a message with profile link
+            from django.contrib import messages
+            profile_url = reverse('admin:referral_system_customuser_myprofile')
+            message = format_html(
+                '👤 <strong>Welcome, {}!</strong> Your Referral Code: <strong>{}</strong> | '
+                '<a href="{}" style="color: #fff; text-decoration: underline;">View Full Profile</a>',
+                request.user.username,
+                request.user.referral_code,
+                profile_url
+            )
+            messages.info(request, message)
+        
+        return super().changelist_view(request, extra_context=extra_context)
+    
     def get_queryset(self, request):
         qs = super().get_queryset(request)
-        # Show referral count
+        
+        # If user is an agent (not superuser), show ONLY their users
+        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
+            return qs.filter(agent=request.user).select_related('referred_by', 'agent')
+        
+        # Superadmins see all users
         return qs.select_related('referred_by', 'agent')
     
-    # Custom action to create agent
+    def get_fieldsets(self, request, obj=None):
+        """Customize fieldsets based on user type"""
+        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
+            return (
+                (None, {
+                    'fields': ('username',)
+                }),
+                ('Personal Info', {
+                    'fields': ('phone_number', 'withdraw_password')
+                }),
+                ('User Type & Referral', {
+                    'fields': ('referral_code', 'referred_by', 'agent')
+                }),
+                ('Status', {
+                    'fields': ('is_active',)
+                }),
+                ('Important Dates', {
+                    'fields': ('last_login', 'date_joined')
+                }),
+            )
+        return super().get_fieldsets(request, obj)
+    
+    def get_readonly_fields(self, request, obj=None):
+        """Make certain fields read-only for agents"""
+        readonly = list(self.readonly_fields)
+        
+        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
+            readonly.extend(['username', 'agent', 'referred_by'])
+            if obj:
+                readonly.append('user_type')
+        
+        return readonly
+    
+    def get_form(self, request, obj=None, **kwargs):
+        """Customize form for agents"""
+        form = super().get_form(request, obj, **kwargs)
+        
+        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
+            if 'referred_by' in form.base_fields:
+                from django.db.models import Q
+                form.base_fields['referred_by'].queryset = CustomUser.objects.filter(
+                    Q(id=request.user.id) | Q(agent=request.user)
+                )
+        
+        return form
+    
+    def has_add_permission(self, request):
+        """Agents can add new users"""
+        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT':
+            return True
+        return super().has_add_permission(request)
+    
+    def has_change_permission(self, request, obj=None):
+        """Agents can only change their users"""
+        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
+            if obj is None:
+                return True
+            return obj.agent == request.user
+        return super().has_change_permission(request, obj)
+    
+    def has_delete_permission(self, request, obj=None):
+        """Agents cannot delete users"""
+        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
+            return False
+        return super().has_delete_permission(request, obj)
+    
+    def save_model(self, request, obj, form, change):
+        """Automatically assign agent when agent creates a user"""
+        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not change:
+            obj.agent = request.user
+            obj.user_type = 'USER'
+            obj.is_staff = False
+        super().save_model(request, obj, form, change)
+    
     actions = ['make_agent', 'make_user', 'activate_users', 'deactivate_users']
     
+    def get_actions(self, request):
+        """Limit actions for agents"""
+        actions = super().get_actions(request)
+        
+        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
+            if 'make_agent' in actions:
+                del actions['make_agent']
+            if 'make_user' in actions:
+                del actions['make_user']
+        
+        return actions
+    
     def make_agent(self, request, queryset):
-        queryset.update(user_type='AGENT')
-        self.message_user(request, f'{queryset.count()} users have been made agents.')
+        updated = queryset.update(user_type='AGENT', is_staff=True)
+        self.message_user(request, f'{updated} user(s) have been made agents.')
     make_agent.short_description = "Make selected users Agents"
     
     def make_user(self, request, queryset):
-        queryset.update(user_type='USER')
-        self.message_user(request, f'{queryset.count()} users have been made normal users.')
+        updated = queryset.update(user_type='USER', is_staff=False)
+        self.message_user(request, f'{updated} user(s) have been made normal users.')
     make_user.short_description = "Make selected users Normal Users"
     
     def activate_users(self, request, queryset):
-        queryset.update(is_active=True)
-        self.message_user(request, f'{queryset.count()} users have been activated.')
+        updated = queryset.update(is_active=True)
+        self.message_user(request, f'{updated} user(s) have been activated.')
     activate_users.short_description = "Activate selected users"
     
     def deactivate_users(self, request, queryset):
-        queryset.update(is_active=False)
-        self.message_user(request, f'{queryset.count()} users have been deactivated.')
+        updated = queryset.update(is_active=False)
+        self.message_user(request, f'{updated} user(s) have been deactivated.')
     deactivate_users.short_description = "Deactivate selected users"
 
 
@@ -95,11 +235,25 @@ class ReferralTrackingAdmin(admin.ModelAdmin):
     readonly_fields = ['referrer', 'referred_user', 'agent', 'created_at']
     ordering = ['-created_at']
     
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        
+        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
+            return qs.filter(agent=request.user)
+        
+        return qs
+    
+    def has_module_permission(self, request):
+        """Hide ReferralTracking from agents completely"""
+        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
+            return False
+        return super().has_module_permission(request)
+    
     def has_add_permission(self, request):
-        # Prevent manual creation
         return False
     
     def has_change_permission(self, request, obj=None):
+
         # Make it read-only
         return False
 
@@ -158,3 +312,8 @@ class LevelAssignmentAdmin(admin.ModelAdmin):
     readonly_fields = ['assigned_at']
     ordering = ['-assigned_at']
 
+    
+    def has_delete_permission(self, request, obj=None):
+        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
+            return False
+        return super().has_delete_permission(request, obj)
