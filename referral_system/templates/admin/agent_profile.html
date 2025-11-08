@@ -1,0 +1,147 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static %}
+
+{% block extrahead %}
+<style>
+    .agent-profile-card {
+        background: white;
+        border-radius: 8px;
+        padding: 30px;
+        margin: 20px 0;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .profile-header {
+        border-bottom: 2px solid #417690;
+        padding-bottom: 15px;
+        margin-bottom: 25px;
+    }
+    .profile-header h1 {
+        color: #417690;
+        margin: 0;
+        font-size: 24px;
+    }
+    .profile-info {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+    }
+    .info-item {
+        padding: 15px;
+        background: #f8f9fa;
+        border-radius: 4px;
+    }
+    .info-label {
+        font-weight: bold;
+        color: #666;
+        font-size: 12px;
+        text-transform: uppercase;
+        margin-bottom: 5px;
+    }
+    .info-value {
+        font-size: 18px;
+        color: #333;
+    }
+    .referral-code {
+        background: #417690;
+        color: white;
+        padding: 10px 20px;
+        border-radius: 4px;
+        font-size: 24px;
+        font-weight: bold;
+        text-align: center;
+        letter-spacing: 2px;
+    }
+    .back-link {
+        display: inline-block;
+        margin-top: 20px;
+        padding: 10px 20px;
+        background: #417690;
+        color: white;
+        text-decoration: none;
+        border-radius: 4px;
+    }
+    .back-link:hover {
+        background: #2d5469;
+        color: white;
+    }
+</style>
+{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+    <a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+    &rsaquo; <a href="{% url 'admin:referral_system_customuser_changelist' %}">{% trans 'Users' %}</a>
+    &rsaquo; {% trans 'My Profile' %}
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="agent-profile-card">
+    <div class="profile-header">
+        <h1>🎯 Agent Profile</h1>
+    </div>
+    
+    <div class="profile-info">
+        <div class="info-item">
+            <div class="info-label">Username</div>
+            <div class="info-value">{{ agent.username }}</div>
+        </div>
+        
+        <div class="info-item">
+            <div class="info-label">Phone Number</div>
+            <div class="info-value">{{ agent.phone_number }}</div>
+        </div>
+        
+        <div class="info-item">
+            <div class="info-label">User Type</div>
+            <div class="info-value">{{ agent.get_user_type_display }}</div>
+        </div>
+        
+        <div class="info-item">
+            <div class="info-label">Account Status</div>
+            <div class="info-value">
+                {% if agent.is_active %}
+                    ✅ Active
+                {% else %}
+                    ❌ Inactive
+                {% endif %}
+            </div>
+        </div>
+        
+        <div class="info-item">
+            <div class="info-label">Date Joined</div>
+            <div class="info-value">{{ agent.date_joined|date:"M d, Y, g:i a" }}</div>
+        </div>
+        
+        <div class="info-item">
+            <div class="info-label">Last Login</div>
+            <div class="info-value">
+                {% if agent.last_login %}
+                    {{ agent.last_login|date:"M d, Y, g:i a" }}
+                {% else %}
+                    Never
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <div style="margin-top: 30px;">
+        <div class="info-label" style="margin-bottom: 10px;">Your Referral Code</div>
+        <div class="referral-code">{{ agent.referral_code }}</div>
+        <p style="margin-top: 10px; color: #666; font-size: 14px;">
+            Share this code with new users to add them to your network.
+        </p>
+    </div>
+    
+    <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;">
+        <div class="info-label">Total Referred Users</div>
+        <div class="info-value" style="font-size: 32px; color: #417690;">
+            {{ agent.agent_users.count }}
+        </div>
+    </div>
+    
+    <a href="{% url 'admin:referral_system_customuser_changelist' %}" class="back-link">
+        ← Back to User List
+    </a>
+</div>
+{% endblock %}

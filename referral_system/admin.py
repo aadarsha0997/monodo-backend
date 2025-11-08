@@ -1,5 +1,8 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.urls import path, reverse
+from django.shortcuts import render
+from django.utils.html import format_html
 from .models import CustomUser, ReferralTracking
 
 
@@ -37,10 +40,56 @@ class CustomUserAdmin(BaseUserAdmin):
     
     readonly_fields = ['date_joined', 'last_login', 'referral_code']
     
+    def get_urls(self):
+        """Add custom URL for agent profile"""
+        urls = super().get_urls()
+        custom_urls = [
+            path('my-profile/', self.admin_site.admin_view(self.agent_profile_view), name='referral_system_customuser_myprofile'),
+        ]
+        return custom_urls + urls
+    
+    def agent_profile_view(self, request):
+        """Custom view for agent to see their own profile"""
+        agent = request.user
+        
+        # Count total referred users
+        total_users = CustomUser.objects.filter(agent=agent).count()
+        
+        context = {
+            **self.admin_site.each_context(request),
+            'agent': agent,
+            'total_users': total_users,
+            'title': 'My Profile',
+            'site_title': self.admin_site.site_title,
+            'site_header': self.admin_site.site_header,
+            'has_permission': True,
+        }
+        
+        return render(request, 'admin/agent_profile.html', context)
+    
+    def changelist_view(self, request, extra_context=None):
+        """Add message at the top for agents"""
+        extra_context = extra_context or {}
+        
+        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
+            # Add a message with profile link
+            from django.contrib import messages
+            profile_url = reverse('admin:referral_system_customuser_myprofile')
+            message = format_html(
+                '👤 <strong>Welcome, {}!</strong> Your Referral Code: <strong>{}</strong> | '
+                '<a href="{}" style="color: #fff; text-decoration: underline;">View Full Profile</a>',
+                request.user.username,
+                request.user.referral_code,
+                profile_url
+            )
+            messages.info(request, message)
+        
+        return super().changelist_view(request, extra_context=extra_context)
+    
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         
-        # If user is an agent (not superuser), show only their users
+        # If user is an agent (not superuser), show ONLY their users
         if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
             return qs.filter(agent=request.user).select_related('referred_by', 'agent')
         
@@ -50,7 +99,6 @@ class CustomUserAdmin(BaseUserAdmin):
     def get_fieldsets(self, request, obj=None):
         """Customize fieldsets based on user type"""
         if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
-            # Agents see limited fields
             return (
                 (None, {
                     'fields': ('username',)
@@ -75,9 +123,8 @@ class CustomUserAdmin(BaseUserAdmin):
         readonly = list(self.readonly_fields)
         
         if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
-            # Agents cannot change these fields
             readonly.extend(['username', 'agent', 'referred_by'])
-            if obj:  # When editing existing user
+            if obj:
                 readonly.append('user_type')
         
         return readonly
@@ -87,10 +134,10 @@ class CustomUserAdmin(BaseUserAdmin):
         form = super().get_form(request, obj, **kwargs)
         
         if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
-            # Limit referred_by choices to agent's users only
             if 'referred_by' in form.base_fields:
+                from django.db.models import Q
                 form.base_fields['referred_by'].queryset = CustomUser.objects.filter(
-                    agent=request.user
+                    Q(id=request.user.id) | Q(agent=request.user)
                 )
         
         return form
@@ -102,11 +149,10 @@ class CustomUserAdmin(BaseUserAdmin):
         return super().has_add_permission(request)
     
     def has_change_permission(self, request, obj=None):
-        """Agents can only change their own users"""
+        """Agents can only change their users"""
         if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
             if obj is None:
                 return True
-            # Agent can only edit users that belong to them
             return obj.agent == request.user
         return super().has_change_permission(request, obj)
     
@@ -119,20 +165,17 @@ class CustomUserAdmin(BaseUserAdmin):
     def save_model(self, request, obj, form, change):
         """Automatically assign agent when agent creates a user"""
         if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not change:
-            # New user created by agent
             obj.agent = request.user
-            obj.user_type = 'USER'  # Force user type to be USER
-            obj.is_staff = False  # Regular users are not staff
+            obj.user_type = 'USER'
+            obj.is_staff = False
         super().save_model(request, obj, form, change)
     
-    # Custom actions
     actions = ['make_agent', 'make_user', 'activate_users', 'deactivate_users']
     
     def get_actions(self, request):
         """Limit actions for agents"""
         actions = super().get_actions(request)
         
-        # Agents cannot change user types
         if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
             if 'make_agent' in actions:
                 del actions['make_agent']
@@ -173,7 +216,6 @@ class ReferralTrackingAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         
-        # If user is an agent, show only their referral tracking
         if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
             return qs.filter(agent=request.user)
         
@@ -182,7 +224,7 @@ class ReferralTrackingAdmin(admin.ModelAdmin):
     def has_module_permission(self, request):
         """Hide ReferralTracking from agents completely"""
         if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
-            return False  # Agents cannot see this model at all
+            return False
         return super().has_module_permission(request)
     
     def has_add_permission(self, request):
