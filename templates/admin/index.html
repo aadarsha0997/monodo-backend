@@ -1,0 +1,107 @@
+{% extends "admin/base_site.html" %}
+{% load i18n dashboard_tags %}
+
+{% block content_title %}
+  <h1>{% trans "Dashboard Overview" %}</h1>
+{% endblock %}
+
+{% block content %}
+  <div class="tw-container">
+    {% dashboard_metrics as metrics %}
+    <div class="tw-grid tw-grid-cols-1 md:tw-grid-cols-2 xl:tw-grid-cols-4 tw-gap-6 tw-mb-8">
+      {% for metric in metrics %}
+        <div class="tw-card tw-card--metric">
+          <span class="tw-card__eyebrow">{{ metric.label }}</span>
+          <span class="tw-card__value">{{ metric.value }}</span>
+        </div>
+      {% endfor %}
+    </div>
+
+    <div class="tw-grid tw-grid-cols-1 xl:tw-grid-cols-2 tw-gap-6">
+      <section class="tw-card tw-card--panel">
+        <header class="tw-card__header">
+          <div>
+            <span class="tw-card__eyebrow">{% trans "Clients" %}</span>
+            <h2 class="tw-card__title">{% trans "Recent Login" %}</h2>
+          </div>
+          <a href="{% url 'admin:referral_system_loginactivity_changelist' %}" class="tw-btn tw-btn--outline">
+            {% trans "View All" %}
+          </a>
+        </header>
+        {% recent_logins 8 as recent_logins %}
+        {% if recent_logins %}
+          <div class="tw-table__wrapper">
+            <table class="tw-table">
+              <thead>
+                <tr>
+                  <th>{% trans "Username" %}</th>
+                  <th>{% trans "IP Address" %}</th>
+                  <th>{% trans "Country" %}</th>
+                  <th class="tw-text-right">{% trans "Time" %}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for login in recent_logins %}
+                  <tr>
+                    <td>{{ login.user.username }}</td>
+                    <td><span class="tw-badge tw-badge--ip">{{ login.ip_address|default:"-" }}</span></td>
+                    <td>{{ login.location|default:"Unknown" }}</td>
+                    <td class="tw-text-right tw-text-muted">{{ login.login_time|timesince }} {% trans "ago" %}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="tw-empty">
+            <h3>{% trans "No recent logins" %}</h3>
+            <p>{% trans "Activity will appear here once users sign in." %}</p>
+          </div>
+        {% endif %}
+      </section>
+
+      <section class="tw-card tw-card--panel">
+        <header class="tw-card__header">
+          <div>
+            <span class="tw-card__eyebrow">{% trans "Records" %}</span>
+            <h2 class="tw-card__title">{% trans "Recent Activity" %}</h2>
+          </div>
+          <a href="{% url 'admin:referral_system_record_changelist' %}" class="tw-btn tw-btn--outline">
+            {% trans "View All" %}
+          </a>
+        </header>
+        {% recent_records 8 as recent_records %}
+        {% if recent_records %}
+          <div class="tw-table__wrapper">
+            <table class="tw-table">
+              <thead>
+                <tr>
+                  <th>{% trans "Title" %}</th>
+                  <th>{% trans "Level" %}</th>
+                  <th>{% trans "Status" %}</th>
+                  <th class="tw-text-right">{% trans "Updated" %}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for record in recent_records %}
+                  <tr>
+                    <td>{{ record.title }}</td>
+                    <td>{{ record.level.display_name|default:"-" }}</td>
+                    <td><span class="tw-badge tw-badge--{{ record.status|lower }}">{{ record.get_status_display }}</span></td>
+                    <td class="tw-text-right tw-text-muted">{{ record.updated_at|timesince }} {% trans "ago" %}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="tw-empty">
+            <h3>{% trans "No record activity" %}</h3>
+            <p>{% trans "Created or updated records will appear in this list." %}</p>
+          </div>
+        {% endif %}
+      </section>
+    </div>
+  </div>
+{% endblock %}
+

@@ -2,7 +2,7 @@ from rest_framework import status, generics, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
-from django.db.models import Count, Q, Prefetch
+from django.db.models import Count, Q, Prefetch, Case, When, IntegerField, Value
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from .models import CustomUser, ReferralTracking, Record, LoginActivity, Level, Review
@@ -408,7 +408,7 @@ class UserRecordImagesView(APIView):
 
         records = Record.objects.filter(
             level=level,
-            status='PENDING'
+            status__in=['PENDING', 'COMPLETED']
         ).select_related(
             'level',
             'created_by'
@@ -418,7 +418,14 @@ class UserRecordImagesView(APIView):
                 queryset=Review.objects.filter(is_active=True).order_by('-created_at'),
                 to_attr='active_reviews'
             )
-        ).order_by('title')
+        ).annotate(
+            status_order=Case(
+                When(status='PENDING', then=Value(0)),
+                When(status='COMPLETED', then=Value(1)),
+                default=Value(2),
+                output_field=IntegerField()
+            )
+        ).order_by('status_order', 'title')
 
         serializer = UserRecordSerializer(
             records,

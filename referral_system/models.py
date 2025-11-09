@@ -3,7 +3,6 @@ from django.db import models, transaction
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from decimal import Decimal, ROUND_HALF_UP
-import uuid
 import random
 import string
 
@@ -65,10 +64,14 @@ class Level(models.Model):
         ('PLATINUM', 'Platinum'),
     )
     
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=20, choices=LEVEL_CHOICES, unique=True)
     display_name = models.CharField(max_length=50)
     description = models.TextField(blank=True, null=True)
+    is_default = models.BooleanField(
+        default=False,
+        help_text="Mark this level as the default assigned to new members"
+    )
     
     # Benefits
     image_upload_limit = models.IntegerField(
@@ -78,15 +81,45 @@ class Level(models.Model):
     commission_rate = models.DecimalField(
         max_digits=5,
         decimal_places=2,
-        default=5.00,
+        default=Decimal('5.00'),
         help_text="Commission percentage (e.g., 7.00 for 7%)"
+    )
+    
+    # Financial thresholds
+    minimum_balance = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Minimum balance required to maintain this level"
+    )
+    min_withdraw_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Minimum amount a member can withdraw"
+    )
+    max_withdraw_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Maximum amount a member can withdraw at once (0 means no limit)"
+    )
+    
+    # Activity counters
+    orders_received_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of orders received while at this level"
+    )
+    withdrawals_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of withdrawals made while at this level"
     )
     
     # Pricing
     upgrade_price = models.DecimalField(
         max_digits=10,
         decimal_places=2,
-        default=0.00,
+        default=Decimal('0.00'),
         help_text="Price to upgrade to this level (0 for free/default level)"
     )
     
@@ -113,11 +146,28 @@ class Level(models.Model):
         verbose_name_plural = 'Levels'
         ordering = ['level_order']
     
+    def clean(self):
+        super().clean()
+        if (
+            self.max_withdraw_amount
+            and self.min_withdraw_amount
+            and self.max_withdraw_amount > Decimal('0.00')
+            and self.max_withdraw_amount < self.min_withdraw_amount
+        ):
+            raise ValidationError("Maximum withdrawal amount cannot be less than minimum withdrawal amount.")
+
     def __str__(self):
         return f"{self.display_name} (Images: {self.image_upload_limit}, Commission: {self.commission_rate}%)"
 
     @classmethod
     def get_default_level(cls):
+        level = (
+            cls.objects.filter(is_default=True, is_active=True)
+            .order_by('level_order')
+            .first()
+        )
+        if level:
+            return level
         level = (
             cls.objects.filter(name=cls.DEFAULT_LEVEL_NAME, is_active=True)
             .order_by('level_order')
@@ -144,7 +194,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         ('USER', 'Normal User'),
     )
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    id = models.AutoField(primary_key=True)
     username = models.CharField(max_length=150, unique=True)
     phone_number = models.CharField(max_length=15, unique=True)
     
@@ -339,7 +389,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
 
 class ReferralTracking(models.Model):
     """Track referral relationships and statistics"""
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    id = models.AutoField(primary_key=True)
     referrer = models.ForeignKey(
         CustomUser, 
         on_delete=models.CASCADE, 
@@ -386,7 +436,7 @@ class Record(models.Model):
         ('CANCELLED', 'Cancelled'),
     )
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    id = models.AutoField(primary_key=True)
 
     level = models.ForeignKey(
         Level,
@@ -466,14 +516,15 @@ class Record(models.Model):
         if self.commission_percentage is None:
             self.commission_percentage = Decimal('0.00')
 
-        if self.commission is None:
-            self.commission = (
-                (Decimal(self.price) * Decimal(self.commission_percentage)) / Decimal('100')
-            ).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        price_decimal = Decimal(self.price)
+        commission_percentage_decimal = Decimal(self.commission_percentage)
 
-        commission_value = self.commission if self.commission is not None else Decimal('0.00')
+        self.commission = (
+            price_decimal * commission_percentage_decimal / Decimal('100')
+        ).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
         self.total_value = (
-            Decimal(self.price) + commission_value
+            price_decimal + self.commission
         ).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
 
         if self.status == 'COMPLETED' and not self.completed_at:
@@ -487,7 +538,7 @@ class Record(models.Model):
 class Review(models.Model):
     """Reusable review texts that can be attached to multiple records."""
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    id = models.AutoField(primary_key=True)
     review_text = models.TextField(help_text="The review content that will be shown to users")
     is_active = models.BooleanField(default=True, help_text="Only active reviews will be included in APIs")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -505,7 +556,7 @@ class Review(models.Model):
 
 class LevelUpgrade(models.Model):
     """Track user level upgrades"""
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    id = models.AutoField(primary_key=True)
     user = models.ForeignKey(
         CustomUser,
         on_delete=models.CASCADE,
@@ -544,7 +595,7 @@ class LevelUpgrade(models.Model):
 
 class LevelAssignment(models.Model):
     """Keep a history of level assignments performed by agents or super admins."""
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    id = models.AutoField(primary_key=True)
     user = models.ForeignKey(
         CustomUser,
         on_delete=models.CASCADE,
@@ -597,7 +648,7 @@ class LoginActivity(models.Model):
         ('unknown', 'Unknown'),
     )
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    id = models.AutoField(primary_key=True)
     user = models.ForeignKey(
         CustomUser,
         on_delete=models.CASCADE,

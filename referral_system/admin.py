@@ -10,15 +10,23 @@ from .models import CustomUser, ReferralTracking
 @admin.register(CustomUser)
 class CustomUserAdmin(BaseUserAdmin):
     list_display = [
+        'id',
         'username',
+        'superior_id',
         'phone_number',
-        'user_type',
-        'level',
-        'referral_code',
-        'referred_by',
-        'agent',
-        'is_active',
-        'date_joined',
+        'balance_amount',
+        'available_daily_order',
+        'taking_orders_today',
+        'todays_commission',
+        'credibility_score',
+        'superior_user',
+        'invitation_code',
+        'status_display',
+        'membership_level',
+        'frozen_amount',
+        'allow_withdrawal',
+        'registration_time',
+        'last_login_time',
     ]
     list_filter = ['user_type', 'level', 'is_active', 'is_staff', 'date_joined']
     search_fields = ['username', 'phone_number', 'referral_code']
@@ -65,7 +73,7 @@ class CustomUserAdmin(BaseUserAdmin):
     def get_list_display(self, request):
         display = list(super().get_list_display(request))
         if hasattr(request.user, 'user_type') and request.user.user_type in {'SUPERADMIN', 'AGENT'}:
-            display = [field for field in display if field != 'level']
+            display = [field for field in display if field != 'membership_level']
         return display
 
     def get_urls(self):
@@ -254,6 +262,102 @@ class CustomUserAdmin(BaseUserAdmin):
         self.message_user(request, f'{updated} user(s) have been deactivated.')
     deactivate_users.short_description = "Deactivate selected users"
 
+    # --- Custom list display helpers ---
+    def superior_id(self, obj):
+        return obj.agent_id or obj.referred_by_id or '—'
+
+    superior_id.short_description = 'Superior ID'
+
+    def balance_amount(self, obj):
+        balance = getattr(obj, 'balance', None)
+        if balance is None:
+            return '—'
+        return balance
+
+    balance_amount.short_description = 'Balance'
+
+    def available_daily_order(self, obj):
+        value = getattr(obj, 'available_daily_order', None)
+        if value is None:
+            return '—'
+        return value
+
+    available_daily_order.short_description = 'Available for daily order'
+
+    def taking_orders_today(self, obj):
+        value = getattr(obj, 'taking_orders_today', None)
+        if value is None:
+            return '—'
+        return 'Yes' if value else 'No'
+
+    taking_orders_today.short_description = 'Taking orders today'
+
+    def todays_commission(self, obj):
+        commission = getattr(obj, 'todays_commission', None)
+        if commission is None:
+            return '—'
+        return commission
+
+    todays_commission.short_description = "Today's commission"
+
+    def credibility_score(self, obj):
+        credibility = getattr(obj, 'credibility', None)
+        if credibility is None:
+            return '—'
+        return credibility
+
+    credibility_score.short_description = 'Credibility'
+
+    def superior_user(self, obj):
+        if obj.agent:
+            return obj.agent
+        if obj.referred_by:
+            return obj.referred_by
+        return '—'
+
+    superior_user.short_description = 'Superior user'
+
+    def invitation_code(self, obj):
+        return obj.referral_code or '—'
+
+    invitation_code.short_description = 'Invitation code'
+
+    def status_display(self, obj):
+        return 'Active' if obj.is_active else 'Inactive'
+
+    status_display.short_description = 'Status'
+
+    def membership_level(self, obj):
+        return obj.level.display_name if obj.level else '—'
+
+    membership_level.short_description = 'Membership Level'
+
+    def frozen_amount(self, obj):
+        frozen = getattr(obj, 'frozen_amount', None)
+        if frozen is None:
+            return '—'
+        return frozen
+
+    frozen_amount.short_description = 'Frozen Amount'
+
+    def allow_withdrawal(self, obj):
+        allow = getattr(obj, 'allow_withdrawal', None)
+        if allow is None:
+            return 'Yes' if obj.is_active else 'No'
+        return 'Yes' if allow else 'No'
+
+    allow_withdrawal.short_description = 'Allow Withdrawal'
+
+    def registration_time(self, obj):
+        return obj.date_joined
+
+    registration_time.short_description = 'Registration time'
+
+    def last_login_time(self, obj):
+        return obj.last_login
+
+    last_login_time.short_description = 'Last login time'
+
 
 @admin.register(ReferralTracking)
 class ReferralTrackingAdmin(admin.ModelAdmin):
@@ -379,10 +483,51 @@ class LoginActivityAdmin(admin.ModelAdmin):
 
 @admin.register(Level)
 class LevelAdmin(admin.ModelAdmin):
-    list_display = ['display_name', 'name', 'commission_rate', 'image_upload_limit', 'is_active', 'level_order']
+    list_display = [
+        'id',
+        'level_name',
+        'default_status',
+        'commission_rate',
+        'minimum_balance',
+        'orders_received_total',
+        'withdrawals_total',
+        'minimum_withdrawal',
+        'maximum_withdrawal',
+    ]
     list_filter = ['is_active']
     search_fields = ['display_name', 'name']
     ordering = ['level_order']
+
+    def level_name(self, obj):
+        return obj.display_name
+
+    level_name.short_description = 'Name'
+
+    def default_status(self, obj):
+        return obj.is_default
+
+    default_status.boolean = True
+    default_status.short_description = 'Default'
+
+    def orders_received_total(self, obj):
+        return obj.orders_received_count
+
+    orders_received_total.short_description = 'Number of order received'
+
+    def withdrawals_total(self, obj):
+        return obj.withdrawals_count
+
+    withdrawals_total.short_description = 'Number of withdrawals'
+
+    def minimum_withdrawal(self, obj):
+        return obj.min_withdraw_amount
+
+    minimum_withdrawal.short_description = 'Minimum amount to withdraw'
+
+    def maximum_withdrawal(self, obj):
+        return obj.max_withdraw_amount
+
+    maximum_withdrawal.short_description = 'Maximum withdrawal amount'
 
     def has_module_permission(self, request):
         user_type = getattr(request.user, 'user_type', None)
