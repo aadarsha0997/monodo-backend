@@ -1,0 +1,32 @@
+.navbar .nav-item {
+  position: relative;
+  transition: opacity 0.2s ease-in-out, visibility 0.2s ease-in-out;
+}
+
+.navbar .nav-item.nav-hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.navbar .nav-item .nav-close-btn {
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  margin-left: 0.35rem;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.navbar .nav-item .nav-close-btn:hover,
+.navbar .nav-item .nav-close-btn:focus {
+  color: #fff;
+}
+
+.navbar .nav-restore-btn {
+  margin-left: auto;
+  margin-right: 0.75rem;
+}
+

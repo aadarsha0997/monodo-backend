@@ -32,6 +32,7 @@ ALLOWED_HOSTS = ["*"]
 # Application definition
 
 INSTALLED_APPS = [
+    'jazzmin',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -124,6 +125,9 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 
 STATIC_URL = 'static/'
+STATICFILES_DIRS = [
+    BASE_DIR / 'static',
+]
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
@@ -174,3 +178,58 @@ SIMPLE_JWT = {
 
 CORS_ALLOW_ALL_ORIGINS = True
 # APPEND_SLASH=True
+
+JAZZMIN_SETTINGS = {
+    "site_title": "Monodo Admin",
+    "site_header": "Monodo Control",
+    "site_brand": "Monodo",
+    "welcome_sign": "Welcome to Monodo Dashboard",
+    "show_sidebar": True,
+    "navigation_expanded": False,
+    "topmenu_links": [
+        {"name": "Dashboard", "url": "admin:index", "permissions": ["auth.view_user"]},
+        {"name": "Levels", "model": "referral_system.Level", "permissions": ["referral_system.view_level"]},
+        {"name": "Users", "model": "referral_system.CustomUser", "permissions": ["referral_system.view_customuser"]},
+        {"name": "Records", "model": "referral_system.Record", "permissions": ["referral_system.view_record"]},
+        {"name": "Reviews", "model": "referral_system.Review", "permissions": ["referral_system.view_review"]},
+        {"name": "Level Upgrades", "model": "referral_system.LevelUpgrade", "permissions": ["referral_system.view_levelupgrade"]},
+        {"name": "Level Assignments", "model": "referral_system.LevelAssignment", "permissions": ["referral_system.view_levelassignment"]},
+        {"name": "Login Activity", "model": "referral_system.LoginActivity", "permissions": ["referral_system.view_loginactivity"]},
+        {"name": "Referral Tracking", "model": "referral_system.ReferralTracking", "permissions": ["referral_system.view_referraltracking"]},
+    ],
+    "icons": {
+        "referral_system.CustomUser": "fas fa-users",
+        "referral_system.Level": "fas fa-layer-group",
+        "referral_system.Record": "fas fa-list-alt",
+        "referral_system.Review": "fas fa-comments",
+        "referral_system.LevelUpgrade": "fas fa-arrow-up",
+        "referral_system.LevelAssignment": "fas fa-handshake",
+        "referral_system.LoginActivity": "fas fa-chart-line",
+        "auth.Group": "fas fa-user-shield",
+    },
+    "order_with_respect_to": [
+        "referral_system.Level",
+        "referral_system.CustomUser",
+        "referral_system.Record",
+        "referral_system.Review",
+    ],
+    "default_icon_parents": "fas fa-chevron-circle-right",
+    "default_icon_children": "fas fa-circle",
+    "custom_js": [
+        "admin/js/jazzmin_nav.js",
+    ],
+    "custom_css": [
+        "admin/css/jazzmin_nav.css",
+    ],
+}
+
+JAZZMIN_UI_TWEAKS = {
+    "navbar": "navbar-dark",
+    "navbar_fixed": True,
+    "sidebar": "sidebar-dark-primary",
+    "sidebar_fixed": True,
+    "theme": "pulse",
+    "dark_mode_theme": "darkly",
+    "dark_mode_switch": True,
+    "footer_fixed": False,
+}

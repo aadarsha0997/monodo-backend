@@ -62,6 +62,12 @@ class CustomUserAdmin(BaseUserAdmin):
     
     readonly_fields = ['date_joined', 'last_login', 'referral_code']
     
+    def get_list_display(self, request):
+        display = list(super().get_list_display(request))
+        if hasattr(request.user, 'user_type') and request.user.user_type in {'SUPERADMIN', 'AGENT'}:
+            display = [field for field in display if field != 'level']
+        return display
+
     def get_urls(self):
         """Add custom URL for agent profile"""
         urls = super().get_urls()
@@ -138,7 +144,27 @@ class CustomUserAdmin(BaseUserAdmin):
                     'fields': ('last_login', 'date_joined')
                 }),
             )
-        return super().get_fieldsets(request, obj)
+        fieldsets = super().get_fieldsets(request, obj)
+        if hasattr(request.user, 'user_type') and request.user.user_type in {'SUPERADMIN', 'AGENT'}:
+            fieldsets = self._remove_field_from_fieldsets(fieldsets, 'level')
+        return fieldsets
+
+    def get_add_fieldsets(self, request):
+        fieldsets = super().get_add_fieldsets(request)
+        if hasattr(request.user, 'user_type') and request.user.user_type in {'SUPERADMIN', 'AGENT'}:
+            fieldsets = self._remove_field_from_fieldsets(fieldsets, 'level')
+        return fieldsets
+
+    @staticmethod
+    def _remove_field_from_fieldsets(fieldsets, field_name):
+        new_fieldsets = []
+        for name, options in fieldsets:
+            fields = options.get('fields')
+            if isinstance(fields, (list, tuple)):
+                filtered = [f for f in fields if f != field_name]
+                options = {**options, 'fields': filtered if isinstance(fields, list) else tuple(filtered)}
+            new_fieldsets.append((name, options))
+        return tuple(new_fieldsets)
     
     def get_readonly_fields(self, request, obj=None):
         """Make certain fields read-only for agents"""
@@ -154,6 +180,8 @@ class CustomUserAdmin(BaseUserAdmin):
     def get_form(self, request, obj=None, **kwargs):
         """Customize form for agents"""
         form = super().get_form(request, obj, **kwargs)
+        if hasattr(request.user, 'user_type') and request.user.user_type in {'SUPERADMIN', 'AGENT'}:
+            form.base_fields.pop('level', None)
         
         if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
             if 'referred_by' in form.base_fields:
@@ -355,6 +383,12 @@ class LevelAdmin(admin.ModelAdmin):
     list_filter = ['is_active']
     search_fields = ['display_name', 'name']
     ordering = ['level_order']
+
+    def has_module_permission(self, request):
+        user_type = getattr(request.user, 'user_type', None)
+        if request.user.is_superuser or user_type == 'SUPERADMIN':
+            return True
+        return False
 
 
 @admin.register(LevelUpgrade)
