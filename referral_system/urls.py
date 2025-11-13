@@ -11,7 +11,8 @@ from .views import (
     ReferralTrackingListView,
     DashboardStatsView,
     ValidateReferralCodeView,
-    UserRecordImagesView
+    UserRecordImagesView,
+    RecordSubmitReviewView
 )
 
 urlpatterns = [
@@ -38,4 +39,5 @@ urlpatterns = [
 
     # Record images
     path('records/images/', UserRecordImagesView.as_view(), name='user-record-images'),
+    path('records/submit-review/', RecordSubmitReviewView.as_view(), name='record-submit-review'),
 ]

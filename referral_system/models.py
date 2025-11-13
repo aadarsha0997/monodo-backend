@@ -232,6 +232,10 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         related_name='agent_users',
         limit_choices_to={'user_type': 'AGENT'}
     )
+
+    # Daily tracking
+    taking_orders_today = models.PositiveIntegerField(default=0)
+    balance = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('20.00'))
     
     # Django required fields
     is_active = models.BooleanField(default=True)

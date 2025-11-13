@@ -439,10 +439,47 @@ class UserRecordImagesView(APIView):
             'display_name': level.display_name,
             'image_upload_limit': level.image_upload_limit,
             'commission_rate': str(level.commission_rate),
+            'minimum_balance': str(level.minimum_balance),
         }
 
         return Response({
             'total_records': records.count(),
             'user_level': user_level,
-            'records': serializer.data
+            'records': serializer.data,
+            'user_balance': str(request.user.balance),
         }, status=status.HTTP_200_OK)
+
+
+class RecordSubmitReviewView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        record_id = request.data.get('record_id')
+        review_id = request.data.get('review_id')
+
+        if not record_id or not review_id:
+            return Response({'detail': 'record_id and review_id are required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            record = Record.objects.select_related('level').prefetch_related('reviews').get(id=record_id)
+        except Record.DoesNotExist:
+            return Response({'detail': 'Record not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if record.status == 'COMPLETED':
+            return Response({'detail': 'Record has already been completed.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            record.reviews.get(id=review_id, is_active=True)
+        except Review.DoesNotExist:
+            return Response({'detail': 'Review not associated with this record.'}, status=status.HTTP_404_NOT_FOUND)
+
+        record.status = 'COMPLETED'
+        record.completed_at = timezone.now()
+        record.save()
+
+        user = request.user
+        user.taking_orders_today = (user.taking_orders_today or 0) + 1
+        user.save(update_fields=['taking_orders_today'])
+
+        serializer = UserRecordSerializer(record, context={'request': request})
+        return Response(serializer.data, status=status.HTTP_200_OK)

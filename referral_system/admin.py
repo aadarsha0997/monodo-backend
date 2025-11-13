@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.contrib.auth.forms import UserCreationForm, UserChangeForm
 from .models import CustomUser, ReferralTracking, Record, Level, LevelUpgrade, LevelAssignment, LoginActivity, Review
 from django.urls import path, reverse
 from django.shortcuts import render
@@ -7,8 +8,42 @@ from django.utils.html import format_html
 from .models import CustomUser, ReferralTracking
 
 
+class CustomUserCreationForm(UserCreationForm):
+    class Meta(UserCreationForm.Meta):
+        model = CustomUser
+        fields = (
+            'username',
+            'phone_number',
+            'withdraw_password',
+            'user_type',
+            'level',
+            'balance',
+            'referred_by',
+            'agent',
+            'is_active',
+            'is_staff',
+            'is_superuser',
+            'groups',
+            'user_permissions',
+        )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['balance'].initial = self.fields['balance'].initial or CustomUser._meta.get_field('balance').default
+        self.fields['withdraw_password'].help_text = "This is the secondary password used for withdrawals."
+        self.fields['withdraw_password'].required = True
+
+
+class CustomUserChangeForm(UserChangeForm):
+    class Meta(UserChangeForm.Meta):
+        model = CustomUser
+        fields = '__all__'
+
+
 @admin.register(CustomUser)
 class CustomUserAdmin(BaseUserAdmin):
+    add_form = CustomUserCreationForm
+    form = CustomUserChangeForm
     list_display = [
         'id',
         'username',
@@ -40,8 +75,16 @@ class CustomUserAdmin(BaseUserAdmin):
         ('Personal Info', {
             'fields': ('phone_number', 'withdraw_password')
         }),
-        ('User Type & Referral', {
-            'fields': ('user_type', 'level', 'referral_code', 'referred_by', 'agent')
+        ('Membership & Referral', {
+            'fields': (
+                'user_type',
+                'level',
+                'balance',
+                'taking_orders_today',
+                'referral_code',
+                'referred_by',
+                'agent'
+            )
         }),
         ('Permissions', {
             'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')
@@ -62,13 +105,14 @@ class CustomUserAdmin(BaseUserAdmin):
                 'withdraw_password',
                 'user_type',
                 'level',
+                'balance',
                 'referred_by',
                 'agent',
             ),
         }),
     )
     
-    readonly_fields = ['date_joined', 'last_login', 'referral_code']
+    readonly_fields = ['date_joined', 'last_login']
     
     def get_list_display(self, request):
         display = list(super().get_list_display(request))
@@ -134,6 +178,9 @@ class CustomUserAdmin(BaseUserAdmin):
     
     def get_fieldsets(self, request, obj=None):
         """Customize fieldsets based on user type"""
+        if request.user.is_superuser:
+            return self.fieldsets
+
         if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
             return (
                 (None, {
@@ -142,7 +189,7 @@ class CustomUserAdmin(BaseUserAdmin):
                 ('Personal Info', {
                     'fields': ('phone_number', 'withdraw_password')
                 }),
-                ('User Type & Referral', {
+                ('Referral Info', {
                     'fields': ('referral_code', 'referred_by', 'agent')
                 }),
                 ('Status', {
@@ -152,16 +199,29 @@ class CustomUserAdmin(BaseUserAdmin):
                     'fields': ('last_login', 'date_joined')
                 }),
             )
-        fieldsets = super().get_fieldsets(request, obj)
-        if hasattr(request.user, 'user_type') and request.user.user_type in {'SUPERADMIN', 'AGENT'}:
-            fieldsets = self._remove_field_from_fieldsets(fieldsets, 'level')
-        return fieldsets
+
+        return super().get_fieldsets(request, obj)
 
     def get_add_fieldsets(self, request):
         fieldsets = super().get_add_fieldsets(request)
-        if hasattr(request.user, 'user_type') and request.user.user_type in {'SUPERADMIN', 'AGENT'}:
-            fieldsets = self._remove_field_from_fieldsets(fieldsets, 'level')
-        return fieldsets
+        if request.user.is_superuser:
+            return self.add_fieldsets
+
+        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
+            return (
+                (None, {
+                    'classes': ('wide',),
+                    'fields': (
+                        'username',
+                        'phone_number',
+                        'password1',
+                        'password2',
+                        'withdraw_password',
+                    ),
+                }),
+            )
+
+        return super().get_add_fieldsets(request)
 
     @staticmethod
     def _remove_field_from_fieldsets(fieldsets, field_name):
@@ -176,8 +236,11 @@ class CustomUserAdmin(BaseUserAdmin):
     
     def get_readonly_fields(self, request, obj=None):
         """Make certain fields read-only for agents"""
+        if request.user.is_superuser:
+            return ['last_login']
+
         readonly = list(self.readonly_fields)
-        
+
         if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
             readonly.extend(['username', 'agent', 'referred_by'])
             if obj:
@@ -188,8 +251,6 @@ class CustomUserAdmin(BaseUserAdmin):
     def get_form(self, request, obj=None, **kwargs):
         """Customize form for agents"""
         form = super().get_form(request, obj, **kwargs)
-        if hasattr(request.user, 'user_type') and request.user.user_type in {'SUPERADMIN', 'AGENT'}:
-            form.base_fields.pop('level', None)
         
         if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
             if 'referred_by' in form.base_fields:

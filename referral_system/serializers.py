@@ -133,10 +133,12 @@ class UserSerializer(serializers.ModelSerializer):
             'referred_by_username',
             'agent_username',
             'total_referrals',
+            'taking_orders_today',
+            'balance',
             'date_joined',
             'is_active'
         ]
-        read_only_fields = ['id', 'referral_code', 'date_joined']
+        read_only_fields = ['id', 'referral_code', 'date_joined', 'taking_orders_today', 'balance']
 
     def get_total_referrals(self, obj):
         return obj.referrals.count()
