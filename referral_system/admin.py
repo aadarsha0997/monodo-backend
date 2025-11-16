@@ -274,7 +274,7 @@ class CustomUserAdmin(BaseUserAdmin):
     readonly_fields = ['date_joined', 'last_login']
     
     class Media:
-        js = ('admin/js/add_debit_modal.js', 'admin/js/reset_order_quantity.js', 'admin/js/more_actions_dropdown.js', 'admin/js/account_details_modal.js',)
+        js = ('admin/js/add_debit_modal.js', 'admin/js/reset_order_quantity.js', 'admin/js/more_actions_dropdown.js', 'admin/js/account_details_modal.js', 'admin/js/account_change_modal.js', 'admin/js/wallet_information_modal.js',)
         css = {
             'all': ('admin/css/add_debit_modal.css', 'admin/css/negative_balance.css', 'admin/css/more_actions_dropdown.css',)
         }
@@ -312,6 +312,16 @@ class CustomUserAdmin(BaseUserAdmin):
                 '<int:user_id>/account-details/',
                 self.admin_site.admin_view(self.account_details_view),
                 name='referral_system_customuser_accountdetails',
+            ),
+            path(
+                '<int:user_id>/account-change/',
+                self.admin_site.admin_view(self.account_change_view),
+                name='referral_system_customuser_accountchange',
+            ),
+            path(
+                '<int:user_id>/wallet-information/',
+                self.admin_site.admin_view(self.wallet_information_view),
+                name='referral_system_customuser_walletinformation',
             ),
         ]
         return custom_urls + urls
@@ -358,14 +368,14 @@ class CustomUserAdmin(BaseUserAdmin):
                 '<div class="more-actions-dropdown" style="position: relative; display: inline-block;">'
                 '<a href="#" class="more-actions-btn" style="background-color: #6c757d; color: white !important; padding: 2px 6px; text-decoration: none; border-radius: 2px; font-size: 10px; font-weight: 600; display: inline-block; white-space: nowrap; cursor: pointer;">More actions</a>'
                 '<div id="more-actions-menu-{}" class="more-actions-menu" style="display: none; position: absolute; top: 100%; left: 0; background: white; border: 1px solid #ddd; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 9999; min-width: 180px; margin-top: 4px; overflow: visible;">'
-                '<a href="#" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px;"><span style="margin-right: 8px;">&gt;</span> Wallet Information</a>'
+                '<a href="#" onclick="event.preventDefault(); openWalletInformationModal({}, \'{}\'); return false;" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px; cursor: pointer;"><span style="margin-right: 8px;">&gt;</span> Wallet Information</a>'
                 '<a href="{}" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px;"><span style="margin-right: 8px;">&gt;</span> Edit</a>'
-                '<a href="#" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px;"><span style="margin-right: 8px;">&gt;</span> Account Change</a>'
+                '<a href="#" onclick="event.preventDefault(); openAccountChangeModal({}, \'{}\'); return false;" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px; cursor: pointer;"><span style="margin-right: 8px;">&gt;</span> Account Change</a>'
                 '<a href="#" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px;"><span style="margin-right: 8px;">&gt;</span> Dealing History</a>'
                 '<a href="#" onclick="event.preventDefault(); openAccountDetailsModal({}, \'{}\'); return false;" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; font-size: 13px; cursor: pointer;"><span style="margin-right: 8px;">&gt;</span> Account Details</a>'
                 '</div>'
                 '</div>',
-                user_id, change_url, user_id, obj.username
+                user_id, user_id, obj.username, change_url, user_id, obj.username, user_id, obj.username
             )
         return '-'
     more_actions_button.short_description = 'More Actions'
@@ -732,6 +742,215 @@ class CustomUserAdmin(BaseUserAdmin):
             
             # Fallback for non-AJAX requests
             return render(request, 'admin/referral_system/account_details.html', {
+                'user': user,
+                'opts': self.model._meta,
+                'has_view_permission': self.has_view_permission(request, user),
+            })
+        except CustomUser.DoesNotExist:
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return JsonResponse({'success': False, 'error': 'User not found'}, status=404)
+            messages.error(request, 'User not found')
+            return HttpResponseRedirect(reverse('admin:referral_system_customuser_changelist'))
+    
+    def account_change_view(self, request, user_id):
+        """Handle Account Change - Change account type, agent, level, etc."""
+        from django.shortcuts import render
+        from django.http import JsonResponse
+        
+        try:
+            user = CustomUser.objects.get(pk=user_id)
+            
+            if request.method == 'POST':
+                # Update account change fields
+                user.user_type = request.POST.get('user_type', user.user_type)
+                
+                # Update level
+                level_id = request.POST.get('level')
+                if level_id:
+                    try:
+                        from .models import Level
+                        level = Level.objects.get(pk=level_id)
+                        user.level = level
+                        # Level change will trigger available_daily_order update in save()
+                    except Level.DoesNotExist:
+                        pass
+                else:
+                    user.level = None
+                
+                # Update agent
+                agent_id = request.POST.get('agent')
+                if agent_id:
+                    try:
+                        agent = CustomUser.objects.get(pk=agent_id, user_type='AGENT')
+                        user.agent = agent
+                    except CustomUser.DoesNotExist:
+                        pass
+                else:
+                    user.agent = None
+                
+                # Update referred_by
+                referred_by_id = request.POST.get('referred_by')
+                if referred_by_id:
+                    try:
+                        referred_by = CustomUser.objects.get(pk=referred_by_id)
+                        if referred_by.id != user.id:  # Don't allow self-referral
+                            user.referred_by = referred_by
+                    except CustomUser.DoesNotExist:
+                        pass
+                else:
+                    user.referred_by = None
+                
+                # Update permissions and status
+                user.is_active = request.POST.get('is_active') == 'on'
+                user.allow_withdrawal = request.POST.get('allow_withdrawal') == 'on'
+                user.rob_single = request.POST.get('rob_single') == 'on'
+                
+                # Update credibility and frozen amount
+                if 'credibility' in request.POST:
+                    try:
+                        user.credibility = int(request.POST.get('credibility', 100))
+                        if user.credibility < 0:
+                            user.credibility = 0
+                        elif user.credibility > 100:
+                            user.credibility = 100
+                    except ValueError:
+                        pass
+                
+                if 'frozen_amount' in request.POST:
+                    try:
+                        from decimal import Decimal
+                        user.frozen_amount = Decimal(request.POST.get('frozen_amount', '0.00'))
+                    except (ValueError, TypeError):
+                        pass
+                
+                user.save()
+                
+                if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return JsonResponse({
+                        'success': True,
+                        'message': 'Account changes saved successfully!'
+                    })
+                
+                messages.success(request, 'Account changes saved successfully!')
+                return HttpResponseRedirect(
+                    reverse('admin:referral_system_customuser_change', args=[user_id])
+                )
+            
+            # GET request - return account change data as JSON for AJAX
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                from .models import Level
+                
+                # Get all agents for dropdown
+                agents = CustomUser.objects.filter(user_type='AGENT').values('id', 'username')
+                
+                # Get all levels for dropdown (with display name)
+                levels = []
+                for level in Level.objects.all():
+                    levels.append({
+                        'id': level.id,
+                        'name': level.get_name_display(),
+                    })
+                
+                # Get all users for referred_by dropdown
+                users = CustomUser.objects.all().values('id', 'username')
+                
+                return JsonResponse({
+                    'user_type': user.user_type,
+                    'current_level_id': user.level.id if user.level else None,
+                    'current_agent_id': user.agent.id if user.agent else None,
+                    'current_referred_by_id': user.referred_by.id if user.referred_by else None,
+                    'is_active': user.is_active,
+                    'allow_withdrawal': user.allow_withdrawal,
+                    'rob_single': user.rob_single,
+                    'credibility': user.credibility,
+                    'frozen_amount': str(user.frozen_amount),
+                    'agents': list(agents),
+                    'levels': list(levels),
+                    'users': list(users),
+                })
+            
+            # Fallback for non-AJAX requests
+            return render(request, 'admin/referral_system/account_change.html', {
+                'user': user,
+                'opts': self.model._meta,
+                'has_view_permission': self.has_view_permission(request, user),
+            })
+        except CustomUser.DoesNotExist:
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return JsonResponse({'success': False, 'error': 'User not found'}, status=404)
+            messages.error(request, 'User not found')
+            return HttpResponseRedirect(reverse('admin:referral_system_customuser_changelist'))
+    
+    def wallet_information_view(self, request, user_id):
+        """Handle Wallet Information - View and edit wallet details"""
+        from django.shortcuts import render
+        from django.http import JsonResponse
+        
+        try:
+            user = CustomUser.objects.get(pk=user_id)
+            
+            if request.method == 'POST':
+                # Update wallet information
+                if 'balance' in request.POST:
+                    try:
+                        from decimal import Decimal
+                        user.balance = Decimal(request.POST.get('balance', '0.00'))
+                    except (ValueError, TypeError):
+                        pass
+                
+                if 'frozen_amount' in request.POST:
+                    try:
+                        from decimal import Decimal
+                        user.frozen_amount = Decimal(request.POST.get('frozen_amount', '0.00'))
+                    except (ValueError, TypeError):
+                        pass
+                
+                if 'credibility' in request.POST:
+                    try:
+                        user.credibility = int(request.POST.get('credibility', 100))
+                        if user.credibility < 0:
+                            user.credibility = 0
+                        elif user.credibility > 100:
+                            user.credibility = 100
+                    except ValueError:
+                        pass
+                
+                if 'available_daily_order' in request.POST:
+                    try:
+                        user.available_daily_order = int(request.POST.get('available_daily_order', 0))
+                        if user.available_daily_order < 0:
+                            user.available_daily_order = 0
+                    except ValueError:
+                        pass
+                
+                user.allow_withdrawal = request.POST.get('allow_withdrawal') == 'on'
+                
+                user.save()
+                
+                if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return JsonResponse({
+                        'success': True,
+                        'message': 'Wallet information updated successfully!'
+                    })
+                
+                messages.success(request, 'Wallet information updated successfully!')
+                return HttpResponseRedirect(
+                    reverse('admin:referral_system_customuser_change', args=[user_id])
+                )
+            
+            # GET request - return wallet information as JSON for AJAX
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return JsonResponse({
+                    'balance': str(user.balance),
+                    'frozen_amount': str(user.frozen_amount),
+                    'todays_commission': str(user.todays_commission),
+                    'credibility': user.credibility,
+                    'available_daily_order': user.available_daily_order,
+                    'allow_withdrawal': user.allow_withdrawal,
+                })
+            
+            # Fallback for non-AJAX requests
+            return render(request, 'admin/referral_system/wallet_information.html', {
                 'user': user,
                 'opts': self.model._meta,
                 'has_view_permission': self.has_view_permission(request, user),
