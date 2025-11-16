@@ -1,0 +1,63 @@
+/* Negative Balance Animation Styles */
+@keyframes pulseRed {
+    0% {
+        background-color: rgba(255, 0, 0, 0.1);
+        box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.4);
+    }
+    50% {
+        background-color: rgba(255, 0, 0, 0.2);
+        box-shadow: 0 0 0 4px rgba(255, 0, 0, 0);
+    }
+    100% {
+        background-color: rgba(255, 0, 0, 0.1);
+        box-shadow: 0 0 0 0 rgba(255, 0, 0, 0);
+    }
+}
+
+@keyframes blinkRed {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+@keyframes highlightRed {
+    0% {
+        background-color: rgba(255, 0, 0, 0.3);
+    }
+    100% {
+        background-color: rgba(255, 0, 0, 0.1);
+    }
+}
+
+.negative-balance {
+    animation: pulseRed 2s infinite, blinkRed 1.5s infinite;
+    background-color: rgba(255, 0, 0, 0.15);
+    border: 1px solid rgba(255, 0, 0, 0.3);
+    transition: all 0.3s ease;
+}
+
+.negative-balance:hover {
+    background-color: rgba(255, 0, 0, 0.25);
+    transform: scale(1.05);
+    box-shadow: 0 2px 8px rgba(255, 0, 0, 0.4);
+}
+
+/* Alternative: Highlight animation on page load */
+@keyframes highlightIn {
+    0% {
+        background-color: rgba(255, 0, 0, 0.5);
+        transform: scale(1.1);
+    }
+    100% {
+        background-color: rgba(255, 0, 0, 0.15);
+        transform: scale(1);
+    }
+}
+
+.negative-balance {
+    animation: pulseRed 2s infinite, blinkRed 1.5s infinite, highlightIn 0.5s ease-out;
+}
+

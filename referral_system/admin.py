@@ -7,6 +7,7 @@ from django.utils.html import format_html
 from django.shortcuts import redirect
 from django.contrib import messages
 from django.http import HttpResponseRedirect
+from decimal import Decimal, InvalidOperation
 from .models import CustomUser, ReferralTracking, Record, Level, LevelUpgrade, LevelAssignment, LoginActivity, Review
 
 
@@ -122,7 +123,7 @@ class CustomUserAdmin(BaseUserAdmin):
         'username',
         'superior_id',
         'phone_number',
-        'balance',
+        'balance_display',
         'available_daily_order',
         'taking_orders_today',
         'todays_commission',
@@ -148,6 +149,18 @@ class CustomUserAdmin(BaseUserAdmin):
     autocomplete_fields = ['agent', 'level', 'referred_by']
     
     # Custom display methods
+    def balance_display(self, obj):
+        """Display balance with red color and animation if negative"""
+        balance = obj.balance or 0
+        if balance < 0:
+            return format_html(
+                '<span class="negative-balance" style="color: red; font-weight: bold; padding: 2px 6px; border-radius: 3px; display: inline-block; animation: pulseRed 2s infinite;">${}</span>',
+                balance
+            )
+        return f"${balance}"
+    balance_display.short_description = 'Balance'
+    balance_display.admin_order_field = 'balance'
+    
     def superior_id(self, obj):
         """Display agent/superior ID"""
         return obj.agent_id if obj.agent_id else '—'
@@ -283,15 +296,21 @@ class CustomUserAdmin(BaseUserAdmin):
         return custom_urls + urls
     
     def add_debit_button(self, obj):
-        """Display Add Debit button with blood red color - inline format"""
+        """Display Add Debit button with blood red color - opens modal"""
         if obj.pk:
             url = reverse('admin:referral_system_customuser_adddebit', args=[obj.pk])
             return format_html(
-                '<a href="{}" style="background-color: #8B0000; color: white !important; padding: 2px 6px; text-decoration: none; border-radius: 2px; font-size: 10px; font-weight: 600; display: inline-block; white-space: nowrap;">Add Debit</a>',
-                url
+                '<a href="{}" onclick="event.preventDefault(); openDebitModal({}, \'{}\'); return false;" style="background-color: #8B0000; color: white !important; padding: 2px 6px; text-decoration: none; border-radius: 2px; font-size: 10px; font-weight: 600; display: inline-block; white-space: nowrap; cursor: pointer;">Add Debit</a>',
+                url, obj.pk, obj.username
             )
         return '-'
     add_debit_button.short_description = 'Add Debit'
+    
+    class Media:
+        js = ('admin/js/add_debit_modal.js',)
+        css = {
+            'all': ('admin/css/add_debit_modal.css', 'admin/css/negative_balance.css',)
+        }
     
     def setup_orders_button(self, obj):
         """Display Setup Orders button with blue color"""
@@ -327,14 +346,90 @@ class CustomUserAdmin(BaseUserAdmin):
     more_actions_button.short_description = 'More Actions'
     
     def add_debit_view(self, request, user_id):
-        """Handle Add Debit action"""
+        """Handle Add Debit action with modal form"""
+        from django.shortcuts import render
+        
         try:
             user = CustomUser.objects.get(pk=user_id)
-            # Here you can implement the debit logic
-            messages.success(request, f'Add Debit action for user: {user.username}')
-            return HttpResponseRedirect(
-                reverse('admin:referral_system_customuser_change', args=[user_id])
-            )
+            
+            if request.method == 'POST':
+                transaction_type = request.POST.get('type')
+                amount = request.POST.get('amount')
+                remark = request.POST.get('remark', '')
+                remark_type = request.POST.get('remark_type', '')
+                
+                # Validate required fields
+                if not transaction_type or not amount:
+                    messages.error(request, 'Type and Amount are required fields.')
+                    return render(request, 'admin/referral_system/add_debit_modal.html', {
+                        'user': user,
+                        'opts': self.model._meta,
+                        'has_view_permission': self.has_view_permission(request, user),
+                    })
+                
+                try:
+                    amount_decimal = Decimal(str(amount))
+                    if amount_decimal <= 0:
+                        messages.error(request, 'Amount must be greater than 0.')
+                        return render(request, 'admin/referral_system/add_debit_modal.html', {
+                            'user': user,
+                            'opts': self.model._meta,
+                            'has_view_permission': self.has_view_permission(request, user),
+                        })
+                    
+                    # Get current balance
+                    current_balance = user.balance or Decimal('0.00')
+                    
+                    # Update user balance based on transaction type
+                    if transaction_type == 'debit':
+                        # Debit: Subtract from balance
+                        new_balance = current_balance - amount_decimal
+                        if new_balance < 0:
+                            messages.warning(request, f'Warning: Balance will become negative: ${new_balance}')
+                        user.balance = new_balance
+                        action_msg = 'removed from'
+                    elif transaction_type == 'credit':
+                        # Credit: Add to balance
+                        user.balance = current_balance + amount_decimal
+                        action_msg = 'added to'
+                    else:
+                        messages.error(request, 'Invalid transaction type.')
+                        return render(request, 'admin/referral_system/add_debit_modal.html', {
+                            'user': user,
+                            'opts': self.model._meta,
+                            'has_view_permission': self.has_view_permission(request, user),
+                        })
+                    
+                    # Save the updated balance
+                    user.save(update_fields=['balance'])
+                    
+                    # Build remark - use remark_type if provided, otherwise use remark
+                    final_remark = remark_type if remark_type else remark
+                    if remark_type and remark and remark != remark_type:
+                        final_remark = f"{remark_type}: {remark}"
+                    
+                    messages.success(
+                        request, 
+                        f'Transaction processed successfully! ${amount_decimal} {action_msg} balance. '
+                        f'Previous Balance: ${current_balance} → New Balance: ${user.balance}'
+                    )
+                    return HttpResponseRedirect(
+                        reverse('admin:referral_system_customuser_change', args=[user_id])
+                    )
+                except (ValueError, InvalidOperation) as e:
+                    messages.error(request, f'Invalid amount format: {str(e)}')
+                    return render(request, 'admin/referral_system/add_debit_modal.html', {
+                        'user': user,
+                        'opts': self.model._meta,
+                        'has_view_permission': self.has_view_permission(request, user),
+                    })
+            
+            # GET request - show modal
+            return render(request, 'admin/referral_system/add_debit_modal.html', {
+                'user': user,
+                'opts': self.model._meta,
+                'has_view_permission': self.has_view_permission(request, user),
+            })
         except CustomUser.DoesNotExist:
             messages.error(request, 'User not found')
             return HttpResponseRedirect(reverse('admin:referral_system_customuser_changelist'))

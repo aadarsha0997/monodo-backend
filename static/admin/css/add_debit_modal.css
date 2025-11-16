@@ -1,0 +1,46 @@
+/* Add Debit Modal Styles */
+#debit-modal-overlay {
+    animation: fadeIn 0.3s ease-in;
+}
+
+#debit-modal {
+    animation: slideIn 0.3s ease-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateY(-50px);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0);
+        opacity: 1;
+    }
+}
+
+#debit-modal input[type="text"]:focus,
+#debit-modal input[type="number"]:focus,
+#debit-modal select:focus,
+#debit-modal textarea:focus {
+    outline: none;
+    border-color: #8B0000;
+    box-shadow: 0 0 0 2px rgba(139, 0, 0, 0.2);
+}
+
+#debit-modal button[type="submit"]:hover {
+    background-color: #6B0000 !important;
+}
+
+#debit-modal button[type="button"]:hover {
+    background-color: #5a6268 !important;
+}
+
