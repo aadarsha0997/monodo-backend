@@ -273,6 +273,12 @@ class CustomUserAdmin(BaseUserAdmin):
     
     readonly_fields = ['date_joined', 'last_login']
     
+    class Media:
+        js = ('admin/js/add_debit_modal.js', 'admin/js/reset_order_quantity.js',)
+        css = {
+            'all': ('admin/css/add_debit_modal.css', 'admin/css/negative_balance.css',)
+        }
+    
     def get_urls(self):
         """Add custom URLs for action buttons"""
         urls = super().get_urls()
@@ -316,12 +322,6 @@ class CustomUserAdmin(BaseUserAdmin):
         return '-'
     add_debit_button.short_description = 'Add Debit'
     
-    class Media:
-        js = ('admin/js/add_debit_modal.js',)
-        css = {
-            'all': ('admin/css/add_debit_modal.css', 'admin/css/negative_balance.css',)
-        }
-    
     def setup_orders_button(self, obj):
         """Display Setup Orders button with blue color"""
         if obj.pk:
@@ -334,12 +334,12 @@ class CustomUserAdmin(BaseUserAdmin):
     setup_orders_button.short_description = 'Setup Orders'
     
     def reset_order_quantity_button(self, obj):
-        """Display Reset Order Quantity button with orange color"""
+        """Display Reset Order Quantity button with orange color - opens modal"""
         if obj.pk:
             url = reverse('admin:referral_system_customuser_resetorderquantity', args=[obj.pk])
             return format_html(
-                '<a href="{}" style="background-color: #ff8c00; color: white !important; padding: 2px 6px; text-decoration: none; border-radius: 2px; font-size: 10px; font-weight: 600; display: inline-block; white-space: nowrap;">Reset Order Qty</a>',
-                url
+                '<a href="{}" onclick="event.preventDefault(); openResetOrderModal({}, \'{}\'); return false;" style="background-color: #ff8c00; color: white !important; padding: 2px 6px; text-decoration: none; border-radius: 2px; font-size: 10px; font-weight: 600; display: inline-block; white-space: nowrap; cursor: pointer;">Reset Order Qty</a>',
+                url, obj.pk, obj.username
             )
         return '-'
     reset_order_quantity_button.short_description = 'Reset Qty'
@@ -581,12 +581,42 @@ class CustomUserAdmin(BaseUserAdmin):
             return JsonResponse({'error': 'User not found'}, status=404)
     
     def reset_order_quantity_view(self, request, user_id):
-        """Handle Reset Order Quantity action"""
+        """Handle Reset Order Quantity - Reset all order tracking and balance to default"""
         try:
             user = CustomUser.objects.get(pk=user_id)
-            # Here you can implement the reset order quantity logic
-            # For example, reset available_daily_order or taking_orders_today
-            messages.success(request, f'Reset Order Quantity action for user: {user.username}')
+            
+            # Store old values for message
+            old_balance = user.balance
+            old_orders_received = user.orders_received_today
+            old_taking_orders = user.taking_orders_today
+            old_current_orders = user.current_orders_made
+            
+            # Reset order tracking fields
+            user.orders_received_today = 0
+            user.taking_orders_today = 0
+            user.current_orders_made = 0
+            user.todays_commission = Decimal('0.00')
+            
+            # Reset balance to default starting balance
+            user.balance = Decimal('20.00')
+            
+            # Save the changes
+            user.save(update_fields=[
+                'orders_received_today',
+                'taking_orders_today',
+                'current_orders_made',
+                'todays_commission',
+                'balance'
+            ])
+            
+            messages.success(
+                request,
+                f'User {user.username} reset successfully! '
+                f'Balance: ${old_balance} → ${user.balance}, '
+                f'Orders Received: {old_orders_received} → 0, '
+                f'Taking Orders: {old_taking_orders} → 0, '
+                f'Current Orders: {old_current_orders} → 0'
+            )
             return HttpResponseRedirect(
                 reverse('admin:referral_system_customuser_change', args=[user_id])
             )
@@ -720,7 +750,7 @@ class LevelAssignmentAdmin(admin.ModelAdmin):
     readonly_fields = ['assigned_at']
     ordering = ['-assigned_at']
 
-
+    
 @admin.register(UserProduct)
 class UserProductAdmin(admin.ModelAdmin):
     list_display = ['id', 'user', 'record', 'position', 'is_active', 'created_at']
