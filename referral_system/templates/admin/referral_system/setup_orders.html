@@ -1,0 +1,709 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls static %}
+
+{% block title %}Setup Orders - {{ user.username }}{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+    body {
+        background-color: #f4f6f9;
+    }
+    .content {
+        padding: 0 !important;
+    }
+</style>
+{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+<a href="{% url 'admin:index' %}">{% trans 'Home' %}</a>
+&rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+&rsaquo; <a href="{% url 'admin:referral_system_customuser_changelist' %}">Users</a>
+&rsaquo; <a href="{% url 'admin:referral_system_customuser_change' user.pk %}">{{ user.username }}</a>
+&rsaquo; Setup Orders
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="setup-orders-container" style="width: 100%; max-width: 100%; margin: 0; padding: 20px; box-sizing: border-box;">
+    <!-- Back to list link -->
+    <div style="margin-bottom: 15px;">
+        <a href="{% url 'admin:referral_system_customuser_changelist' %}" 
+           style="color: #28a745; text-decoration: none; font-weight: 600;">
+            ← Back to list
+        </a>
+    </div>
+    
+    <!-- User Order Settings Section -->
+    <div class="card card-primary card-outline" style="margin-bottom: 20px;">
+        <div class="card-header">
+            <h3 class="card-title" style="margin: 0;">
+                <i class="fas fa-user"></i> Current user: <strong>{{ user.username }}</strong>
+            </h3>
+        </div>
+        <div class="card-body">
+        
+        <form method="post" id="settings-form" style="margin-bottom: 20px;">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="update_settings">
+            
+            <div class="form-row" style="margin-bottom: 12px;">
+                <label style="display: inline-block; width: 250px; font-weight: 600;">Current number of orders made:</label>
+                <input type="number" name="current_orders_made" value="{{ user.current_orders_made }}" 
+                       min="0" style="padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; width: 150px;">
+            </div>
+            
+            <div class="form-row" style="margin-bottom: 12px;">
+                <label style="display: inline-block; width: 250px; font-weight: 600;">Orders received today:</label>
+                <input type="number" name="orders_received_today" value="{{ user.orders_received_today }}" 
+                       min="0" style="padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; width: 150px;">
+            </div>
+            
+            <div class="form-row" style="margin-bottom: 12px;">
+                <label style="display: inline-block; width: 250px; font-weight: 600;">Maximum orders received by level:</label>
+                <input type="number" name="max_orders_by_level" value="{{ max_orders_by_level }}" 
+                       readonly style="padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; width: 150px; background-color: #f5f5f5;">
+            </div>
+            
+            <div class="form-row" style="margin-bottom: 15px;">
+                <label style="display: inline-block; width: 250px; font-weight: 600;">Start continuous orders after several orders:</label>
+                <input type="number" name="start_continuous_orders_after" value="{{ user.start_continuous_orders_after }}" 
+                       min="0" style="padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; width: 150px;">
+            </div>
+            
+            <!-- Products List -->
+            <div style="margin-bottom: 15px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 600;">Products:</label>
+                <div id="products-list" style="display: flex; flex-wrap: wrap; gap: 8px;">
+                    {% for user_product in user_products %}
+                    <span class="product-tag" data-id="{{ user_product.id }}" data-position="{{ user_product.position }}" 
+                          style="background-color: #28a745; color: white; padding: 6px 12px; border-radius: 4px; display: inline-flex; align-items: center; gap: 8px; font-size: 14px;">
+                        <span>({{ user_product.position }}) {{ user_product.record.title }} ${{ user_product.record.price }}</span>
+                                        <button type="button" onclick="removeProduct({{ user_product.id }})" 
+                                    style="background: none; border: none; color: white; cursor: pointer; font-size: 16px; font-weight: bold; padding: 0; margin: 0; line-height: 1;" title="Remove product">&times;</button>
+                    </span>
+                    {% empty %}
+                    <span style="color: #666; font-style: italic;">No products added yet</span>
+                    {% endfor %}
+                </div>
+            </div>
+            
+            <div style="display: flex; gap: 10px; margin-top: 20px;">
+                <button type="submit" class="btn btn-primary">
+                    <i class="fas fa-check"></i> OK
+                </button>
+                <button type="button" onclick="resetContinuousOrders()" class="btn btn-danger">
+                    <i class="fas fa-redo"></i> Reset continuous orders
+                </button>
+            </div>
+        </form>
+        </div>
+    </div>
+    
+    <!-- Order Summary Timeline -->
+    <div class="card card-info card-outline" style="margin-bottom: 20px;">
+        <div class="card-header">
+            <h3 class="card-title" style="margin: 0;">
+                <i class="fas fa-chart-line"></i> Order Summary
+            </h3>
+        </div>
+        <div class="card-body">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+                <strong>Today Orders:</strong> <span class="today-orders-value">{{ user.orders_received_today }}</span>
+            </div>
+            <div>
+                <strong>Daily Available Orders:</strong> {{ max_orders_by_level }}
+            </div>
+        </div>
+        <div style="position: relative; margin-top: 20px;">
+            <!-- Progress bar with tick marks -->
+            <div class="progress progress-with-ticks" style="height: 30px; position: relative; background-color: #e9ecef; border-radius: .25rem; overflow: visible;">
+                <!-- Vertical tick marks container -->
+                {% if max_orders_by_level > 0 and max_orders_range %}
+                <div class="progress-ticks-container" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 1; pointer-events: none;">
+                    {% for tick in max_orders_range %}
+                    <div class="progress-tick" style="position: absolute; left: {% widthratio tick max_orders_by_level 100 %}%; top: 0; bottom: 0; width: 1px; background-color: #adb5bd;"></div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                
+                <!-- Progress bar -->
+                {% if max_orders_by_level > 0 %}
+                <div class="progress-bar" role="progressbar" 
+                     style="width: {% widthratio user.orders_received_today max_orders_by_level 100 %}%; 
+                            height: 100%; 
+                            background-color: #007bff; 
+                            transition: width .6s ease;
+                            position: relative;
+                            z-index: 2;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            color: #fff;
+                            font-weight: 600;
+                            font-size: 0.875rem;" 
+                     aria-valuenow="{{ user.orders_received_today }}" 
+                     aria-valuemin="0" 
+                     aria-valuemax="{{ max_orders_by_level }}">
+                    {{ user.orders_received_today }}/{{ max_orders_by_level }}
+                </div>
+                {% else %}
+                <div class="progress-bar" role="progressbar" 
+                     style="width: 0%; height: 100%; background-color: #007bff; position: relative; z-index: 2; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 600; font-size: 0.875rem;" 
+                     aria-valuenow="0" 
+                     aria-valuemin="0" 
+                     aria-valuemax="100">
+                    0/0
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        </div>
+    </div>
+    
+    <!-- Product List Section -->
+    <div class="card card-success card-outline">
+        <div class="card-header">
+            <h3 class="card-title" style="margin: 0;">
+                <i class="fas fa-box"></i> Product List
+            </h3>
+        </div>
+        <div class="card-body">
+        
+        <!-- Price Filter -->
+        <form method="get" style="margin-bottom: 20px; display: flex; gap: 10px; align-items: flex-end;">
+            <div>
+                <label style="display: block; margin-bottom: 5px; font-weight: 600; font-size: 14px;">Lowest Price</label>
+                <input type="number" name="min_price" value="{{ request.GET.min_price|default:'' }}" 
+                       step="0.01" min="0" placeholder="0.00"
+                       style="padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; width: 120px;">
+            </div>
+            <div>
+                <label style="display: block; margin-bottom: 5px; font-weight: 600; font-size: 14px;">Highest Price</label>
+                <input type="number" name="max_price" value="{{ request.GET.max_price|default:'' }}" 
+                       step="0.01" min="0" placeholder="0.00"
+                       style="padding: 6px 10px; border: 1px solid #ddd; border-radius: 4px; width: 120px;">
+            </div>
+            <button type="submit" class="btn btn-primary" style="height: fit-content;">
+                <i class="fas fa-filter"></i> Screening
+            </button>
+        </form>
+        
+        <!-- Available Products List -->
+        <div class="product-list-simple">
+            {% for record in available_records %}
+            <div class="product-item">
+                <div class="product-info">
+                    <div class="product-name">{{ record.title }}</div>
+                    <div class="product-price">${{ record.price }}</div>
+                </div>
+                <div class="product-actions">
+                    <button type="button" onclick="addProduct({{ record.id }}, '{{ record.title|escapejs }}', {{ record.price }})" 
+                            class="btn btn-primary btn-sm">
+                        Add to Continuous Order
+                    </button>
+                    <button type="button" onclick="replaceNextOrder({{ record.id }}, '{{ record.title|escapejs }}', {{ record.price }})" 
+                            class="btn btn-primary btn-sm">
+                        Replace Next Order
+                    </button>
+                </div>
+            </div>
+            {% empty %}
+            <div class="product-empty">
+                <i class="fas fa-inbox fa-3x" style="display: block; margin-bottom: 10px; opacity: 0.3; color: #6c757d;"></i>
+                <strong>No products found.</strong><br>
+                <small>Try adjusting the price filter.</small>
+            </div>
+            {% endfor %}
+        </div>
+        
+        <!-- Pagination -->
+        {% if available_records.has_other_pages %}
+        <div style="margin-top: 20px; text-align: center;">
+            {% if available_records.has_previous %}
+                <a href="?page={{ available_records.previous_page_number }}{% if request.GET.min_price %}&min_price={{ request.GET.min_price }}{% endif %}{% if request.GET.max_price %}&max_price={{ request.GET.max_price }}{% endif %}" 
+                   style="padding: 8px 12px; margin: 0 4px; text-decoration: none; border: 1px solid #ddd; border-radius: 4px; color: #007bff;">Previous</a>
+            {% endif %}
+            <span style="padding: 8px 12px; margin: 0 4px;">Page {{ available_records.number }} of {{ available_records.paginator.num_pages }}</span>
+            {% if available_records.has_next %}
+                <a href="?page={{ available_records.next_page_number }}{% if request.GET.min_price %}&min_price={{ request.GET.min_price }}{% endif %}{% if request.GET.max_price %}&max_price={{ request.GET.max_price }}{% endif %}" 
+                   style="padding: 8px 12px; margin: 0 4px; text-decoration: none; border: 1px solid #ddd; border-radius: 4px; color: #007bff;">Next</a>
+            {% endif %}
+        </div>
+        {% endif %}
+        </div>
+    </div>
+</div>
+
+<style>
+.setup-orders-container {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+.card {
+    margin-bottom: 20px;
+    box-shadow: 0 0 1px rgba(0,0,0,.125), 0 1px 3px rgba(0,0,0,.2);
+    border: none;
+    border-radius: .25rem;
+}
+
+.card-header {
+    background-color: #fff;
+    border-bottom: 1px solid rgba(0,0,0,.125);
+    padding: .75rem 1.25rem;
+    border-radius: calc(.25rem - 1px) calc(.25rem - 1px) 0 0;
+}
+
+.card-title {
+    font-size: 1.1rem;
+    font-weight: 400;
+    color: #495057;
+}
+
+.card-primary .card-header {
+    background-color: #007bff;
+    color: #fff;
+}
+
+.card-primary .card-title {
+    color: #fff;
+}
+
+.card-info .card-header {
+    background-color: #17a2b8;
+    color: #fff;
+}
+
+.card-info .card-title {
+    color: #fff;
+}
+
+.card-success .card-header {
+    background-color: #28a745;
+    color: #fff;
+}
+
+.card-success .card-title {
+    color: #fff;
+}
+
+.card-body {
+    padding: 1.25rem;
+    background-color: #fff;
+}
+
+.form-row {
+    margin-bottom: 1rem;
+}
+
+.form-row label {
+    display: inline-block;
+    width: 280px;
+    font-weight: 600;
+    color: #495057;
+    margin-bottom: 0;
+    padding-top: 8px;
+}
+
+.form-row input[type="number"],
+.form-row input[type="text"] {
+    width: 180px;
+    padding: .375rem .75rem;
+    font-size: 1rem;
+    line-height: 1.5;
+    color: #495057;
+    background-color: #fff;
+    border: 1px solid #ced4da;
+    border-radius: .25rem;
+    transition: border-color .15s ease-in-out,box-shadow .15s ease-in-out;
+}
+
+.form-row input[type="number"]:focus,
+.form-row input[type="text"]:focus {
+    color: #495057;
+    background-color: #fff;
+    border-color: #80bdff;
+    outline: 0;
+    box-shadow: 0 0 0 .2rem rgba(0,123,255,.25);
+}
+
+.form-row input[readonly] {
+    background-color: #e9ecef;
+    opacity: 1;
+}
+
+.btn {
+    display: inline-block;
+    font-weight: 400;
+    text-align: center;
+    vertical-align: middle;
+    user-select: none;
+    border: 1px solid transparent;
+    padding: .375rem .75rem;
+    font-size: 1rem;
+    line-height: 1.5;
+    border-radius: .25rem;
+    transition: color .15s ease-in-out,background-color .15s ease-in-out,border-color .15s ease-in-out,box-shadow .15s ease-in-out;
+    cursor: pointer;
+}
+
+.btn-primary {
+    color: #fff;
+    background-color: #007bff;
+    border-color: #007bff;
+}
+
+.btn-primary:hover {
+    color: #fff;
+    background-color: #0069d9;
+    border-color: #0062cc;
+}
+
+.btn-success {
+    color: #fff;
+    background-color: #28a745;
+    border-color: #28a745;
+}
+
+.btn-success:hover {
+    color: #fff;
+    background-color: #218838;
+    border-color: #1e7e34;
+}
+
+.btn-danger {
+    color: #fff;
+    background-color: #dc3545;
+    border-color: #dc3545;
+}
+
+.btn-danger:hover {
+    color: #fff;
+    background-color: #c82333;
+    border-color: #bd2130;
+}
+
+.product-tag {
+    background-color: #28a745;
+    color: white;
+    padding: 8px 14px;
+    border-radius: .25rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    margin: 4px;
+    transition: all .2s ease-in-out;
+}
+
+.product-tag:hover {
+    background-color: #218838;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,0,0,.2);
+}
+
+.product-tag button {
+    background: none;
+    border: none;
+    color: white;
+    cursor: pointer;
+    font-size: 18px;
+    font-weight: bold;
+    padding: 0;
+    margin: 0;
+    line-height: 1;
+    transition: transform .2s;
+}
+
+.product-tag button:hover {
+    transform: scale(1.2);
+}
+
+.table {
+    width: 100%;
+    margin-bottom: 1rem;
+    color: #212529;
+    border-collapse: collapse;
+}
+
+.table thead th {
+    vertical-align: bottom;
+    border-bottom: 2px solid #dee2e6;
+    padding: .75rem;
+    text-align: left;
+    font-weight: 600;
+    background-color: #f8f9fa;
+    color: #495057;
+}
+
+.table tbody td {
+    padding: .75rem;
+    vertical-align: top;
+    border-top: 1px solid #dee2e6;
+}
+
+.table tbody tr:hover {
+    background-color: rgba(0,0,0,.075);
+}
+
+.progress {
+    display: flex;
+    height: 1rem;
+    overflow: hidden;
+    background-color: #e9ecef;
+    border-radius: .25rem;
+}
+
+.progress-bar {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    color: #fff;
+    text-align: center;
+    background-color: #007bff;
+    transition: width .6s ease;
+}
+
+.progress {
+    position: relative;
+    display: flex;
+    height: 1rem;
+    overflow: hidden;
+    background-color: #e9ecef;
+    border-radius: .25rem;
+}
+
+.progress-tick {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background-color: #adb5bd;
+    opacity: 0.5;
+}
+
+.badge {
+    display: inline-block;
+    padding: .25em .4em;
+    font-size: 75%;
+    font-weight: 700;
+    line-height: 1;
+    text-align: center;
+    white-space: nowrap;
+    vertical-align: baseline;
+    border-radius: .25rem;
+}
+
+.product-list-simple {
+    background: #fff;
+    border-radius: .25rem;
+    overflow: hidden;
+}
+
+.product-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    border-bottom: 1px solid #e9ecef;
+    transition: background-color 0.2s;
+}
+
+.product-item:last-child {
+    border-bottom: none;
+}
+
+.product-item:hover {
+    background-color: #f8f9fa;
+}
+
+.product-info {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    flex: 1;
+}
+
+.product-name {
+    font-size: 1rem;
+    font-weight: 500;
+    color: #212529;
+    min-width: 200px;
+}
+
+.product-price {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #28a745;
+}
+
+.product-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.product-empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: #6c757d;
+}
+
+.table-responsive {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 768px) {
+    .form-row label {
+        width: 100%;
+        display: block;
+        margin-bottom: .5rem;
+    }
+    
+    .form-row input[type="number"],
+    .form-row input[type="text"] {
+        width: 100%;
+    }
+}
+</style>
+
+<script>
+// Real-time progress tracking
+let statsPollInterval;
+
+function startRealTimeTracking() {
+    const userId = {{ user.id }};
+    const statsUrl = `/admin/referral_system/customuser/${userId}/setup-orders/stats/`;
+    
+    function updateStats() {
+        fetch(statsUrl, {
+            method: 'GET',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            credentials: 'same-origin'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                console.error('Error fetching stats:', data.error);
+                return;
+            }
+            
+            // Update Today Orders display
+            const todayOrdersElement = document.querySelector('.today-orders-value');
+            if (todayOrdersElement) {
+                todayOrdersElement.textContent = data.orders_received_today;
+            }
+            
+            // Update progress bar
+            const progressBar = document.querySelector('.progress-bar[role="progressbar"]');
+            if (progressBar && data.max_orders_by_level > 0) {
+                const percentage = Math.round((data.orders_received_today / data.max_orders_by_level) * 100);
+                progressBar.style.width = percentage + '%';
+                progressBar.setAttribute('aria-valuenow', data.orders_received_today);
+                progressBar.setAttribute('aria-valuemax', data.max_orders_by_level);
+                progressBar.textContent = data.orders_received_today + '/' + data.max_orders_by_level;
+            }
+            
+            // Update orders_received_today input if exists
+            const ordersInput = document.querySelector('input[name="orders_received_today"]');
+            if (ordersInput) {
+                ordersInput.value = data.orders_received_today;
+            }
+        })
+        .catch(error => {
+            console.error('Error updating stats:', error);
+        });
+    }
+    
+    // Update immediately and then every 2 seconds
+    updateStats();
+    statsPollInterval = setInterval(updateStats, 2000);
+}
+
+// Start tracking when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    startRealTimeTracking();
+});
+
+// Clean up on page unload
+window.addEventListener('beforeunload', function() {
+    if (statsPollInterval) {
+        clearInterval(statsPollInterval);
+    }
+});
+
+function addProduct(recordId, title, price) {
+    // Get next position
+    const productTags = document.querySelectorAll('.product-tag');
+    let maxPosition = -1;
+    productTags.forEach(tag => {
+        const pos = parseInt(tag.dataset.position) || 0;
+        if (pos > maxPosition) maxPosition = pos;
+    });
+    const nextPosition = maxPosition + 1;
+    
+    // Create form and submit
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.innerHTML = `
+        {% csrf_token %}
+        <input type="hidden" name="action" value="add_product">
+        <input type="hidden" name="record_id" value="${recordId}">
+        <input type="hidden" name="position" value="${nextPosition}">
+    `;
+    document.body.appendChild(form);
+    form.submit();
+}
+
+function replaceNextOrder(recordId, title, price) {
+    // Add at position 0 (next order)
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.innerHTML = `
+        {% csrf_token %}
+        <input type="hidden" name="action" value="add_product">
+        <input type="hidden" name="record_id" value="${recordId}">
+        <input type="hidden" name="position" value="0">
+    `;
+    document.body.appendChild(form);
+    form.submit();
+}
+
+function removeProduct(userProductId) {
+    if (confirm('Are you sure you want to remove this product?')) {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.innerHTML = `
+            {% csrf_token %}
+            <input type="hidden" name="action" value="remove_product">
+            <input type="hidden" name="user_product_id" value="${userProductId}">
+        `;
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+
+function resetContinuousOrders() {
+    if (confirm('Are you sure you want to reset the continuous orders count?')) {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.innerHTML = `
+            {% csrf_token %}
+            <input type="hidden" name="action" value="reset_continuous_orders">
+        `;
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+</script>
+{% endblock %}

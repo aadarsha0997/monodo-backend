@@ -479,15 +479,23 @@ class RecordSubmitReviewView(APIView):
 
         user = request.user
         user.taking_orders_today = (user.taking_orders_today or 0) + 1
+        user.orders_received_today = (user.orders_received_today or 0) + 1
         
         # Add commission to user balance when task is completed
         if record.commission:
             user.balance = (user.balance or Decimal('0.00')) + record.commission
         
-        user.save(update_fields=['taking_orders_today', 'balance'])
+        user.save(update_fields=['taking_orders_today', 'orders_received_today', 'balance'])
 
         serializer = UserRecordSerializer(record, context={'request': request})
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response({
+            'record': serializer.data,
+            'user_stats': {
+                'orders_received_today': user.orders_received_today,
+                'taking_orders_today': user.taking_orders_today,
+                'balance': str(user.balance)
+            }
+        }, status=status.HTTP_200_OK)
 
 
 class SaveBankAccountView(APIView):

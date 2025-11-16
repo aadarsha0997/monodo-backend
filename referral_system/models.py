@@ -190,6 +190,20 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     taking_orders_today = models.PositiveIntegerField(default=0)
     balance = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('20.00'))
     
+    # Order tracking fields
+    current_orders_made = models.PositiveIntegerField(
+        default=0,
+        help_text="Current number of orders made by the user"
+    )
+    orders_received_today = models.PositiveIntegerField(
+        default=0,
+        help_text="Orders received today"
+    )
+    start_continuous_orders_after = models.PositiveIntegerField(
+        default=0,
+        help_text="Start continuous orders after this many orders"
+    )
+    
     # Additional user fields
     available_daily_order = models.PositiveIntegerField(
         default=0,
@@ -388,9 +402,11 @@ class Record(models.Model):
 
     level = models.ForeignKey(
         Level,
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name='records',
-        default=Level.get_default_level_id,
+        default=None,
         help_text="Level this record belongs to"
     )
     created_by = models.ForeignKey(
@@ -465,6 +481,9 @@ class Record(models.Model):
         if self.level and (is_new_record or level_changed or not self.commission_percentage):
             # Set commission_percentage to level's commission_rate
             self.commission_percentage = self.level.commission_rate
+        elif not self.level and not self.commission_percentage:
+            # If no level is set, use a default commission percentage of 0
+            self.commission_percentage = Decimal('0.00')
         
         # Calculate commission from price and commission_percentage
         # commission = price * commission_percentage (commission_percentage is already a decimal, e.g., 0.08 for 8%)
@@ -638,3 +657,44 @@ class LoginActivity(models.Model):
 
     def __str__(self):
         return f"{self.user.username} logged in at {self.login_time:%Y-%m-%d %H:%M:%S}"
+
+
+class UserProduct(models.Model):
+    """Link users with records/products, allowing position-based ordering for continuous orders"""
+    id = models.AutoField(primary_key=True)
+    user = models.ForeignKey(
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name='user_products',
+        help_text="User who owns this product assignment"
+    )
+    record = models.ForeignKey(
+        Record,
+        on_delete=models.CASCADE,
+        related_name='user_assignments',
+        help_text="Product/Record assigned to this user"
+    )
+    position = models.PositiveIntegerField(
+        default=0,
+        help_text="Position/order in the user's product list (lower number = earlier in queue)"
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this product is active in the user's list"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'user_products'
+        verbose_name = 'User Product'
+        verbose_name_plural = 'User Products'
+        ordering = ['user', 'position', 'created_at']
+        unique_together = ['user', 'record']
+        indexes = [
+            models.Index(fields=['user', 'position']),
+            models.Index(fields=['user', 'is_active']),
+        ]
+    
+    def __str__(self):
+        return f"{self.user.username} - {self.record.title} (Position: {self.position})"

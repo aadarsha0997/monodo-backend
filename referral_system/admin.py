@@ -8,7 +8,7 @@ from django.shortcuts import redirect
 from django.contrib import messages
 from django.http import HttpResponseRedirect
 from decimal import Decimal, InvalidOperation
-from .models import CustomUser, ReferralTracking, Record, Level, LevelUpgrade, LevelAssignment, LoginActivity, Review
+from .models import CustomUser, ReferralTracking, Record, Level, LevelUpgrade, LevelAssignment, LoginActivity, Review, UserProduct
 
 
 class CustomUserCreationForm(UserCreationForm):
@@ -126,6 +126,8 @@ class CustomUserAdmin(BaseUserAdmin):
         'balance_display',
         'available_daily_order',
         'taking_orders_today',
+        'current_orders_made',
+        'orders_received_today',
         'todays_commission',
         'credibility',
         'superior_user',
@@ -254,6 +256,9 @@ class CustomUserAdmin(BaseUserAdmin):
                 'balance',
                 'available_daily_order',
                 'taking_orders_today',
+                'current_orders_made',
+                'orders_received_today',
+                'start_continuous_orders_after',
                 'todays_commission',
                 'credibility',
                 'frozen_amount',
@@ -281,6 +286,11 @@ class CustomUserAdmin(BaseUserAdmin):
                 '<int:user_id>/setup-orders/',
                 self.admin_site.admin_view(self.setup_orders_view),
                 name='referral_system_customuser_setuporders',
+            ),
+            path(
+                '<int:user_id>/setup-orders/stats/',
+                self.admin_site.admin_view(self.setup_orders_stats_view),
+                name='referral_system_customuser_setuporders_stats',
             ),
             path(
                 '<int:user_id>/reset-order-quantity/',
@@ -435,17 +445,140 @@ class CustomUserAdmin(BaseUserAdmin):
             return HttpResponseRedirect(reverse('admin:referral_system_customuser_changelist'))
     
     def setup_orders_view(self, request, user_id):
-        """Handle Setup Orders action"""
+        """Handle Setup Orders - Manage user products/orders with position control"""
+        from django.shortcuts import render
+        from django.core.paginator import Paginator
+        from django.db import transaction
+        
         try:
             user = CustomUser.objects.get(pk=user_id)
-            # Here you can implement the setup orders logic
-            messages.success(request, f'Setup Orders action for user: {user.username}')
-            return HttpResponseRedirect(
-                reverse('admin:referral_system_customuser_change', args=[user_id])
-            )
+            
+            # Handle POST requests for adding/removing/updating products
+            if request.method == 'POST':
+                action = request.POST.get('action')
+                
+                if action == 'update_settings':
+                    # Update user order settings
+                    user.current_orders_made = int(request.POST.get('current_orders_made', 0) or 0)
+                    user.orders_received_today = int(request.POST.get('orders_received_today', 0) or 0)
+                    user.start_continuous_orders_after = int(request.POST.get('start_continuous_orders_after', 0) or 0)
+                    user.save(update_fields=['current_orders_made', 'orders_received_today', 'start_continuous_orders_after'])
+                    messages.success(request, 'Order settings updated successfully.')
+                
+                elif action == 'add_product':
+                    record_id = request.POST.get('record_id')
+                    position = int(request.POST.get('position', 0) or 0)
+                    if record_id:
+                        try:
+                            record = Record.objects.get(pk=record_id)
+                            user_product, created = UserProduct.objects.get_or_create(
+                                user=user,
+                                record=record,
+                                defaults={'position': position, 'is_active': True}
+                            )
+                            if not created:
+                                user_product.position = position
+                                user_product.is_active = True
+                                user_product.save()
+                            messages.success(request, f'Product "{record.title}" added successfully.')
+                        except Record.DoesNotExist:
+                            messages.error(request, 'Record not found.')
+                
+                elif action == 'remove_product':
+                    user_product_id = request.POST.get('user_product_id')
+                    if user_product_id:
+                        try:
+                            user_product = UserProduct.objects.get(pk=user_product_id, user=user)
+                            user_product.delete()
+                            messages.success(request, 'Product removed successfully.')
+                        except UserProduct.DoesNotExist:
+                            messages.error(request, 'Product not found.')
+                
+                elif action == 'update_positions':
+                    # Update positions from form data
+                    positions = request.POST.getlist('positions[]')
+                    for pos_data in positions:
+                        if pos_data:
+                            parts = pos_data.split(':')
+                            if len(parts) == 2:
+                                user_product_id, new_position = parts
+                                try:
+                                    user_product = UserProduct.objects.get(pk=user_product_id, user=user)
+                                    user_product.position = int(new_position)
+                                    user_product.save(update_fields=['position'])
+                                except (UserProduct.DoesNotExist, ValueError):
+                                    pass
+                    messages.success(request, 'Product positions updated successfully.')
+                
+                elif action == 'reset_continuous_orders':
+                    # Reset continuous orders count
+                    user.current_orders_made = 0
+                    user.save(update_fields=['current_orders_made'])
+                    messages.success(request, 'Continuous orders count reset successfully.')
+                
+                return HttpResponseRedirect(reverse('admin:referral_system_customuser_setuporders', args=[user_id]))
+            
+            # GET request - show setup orders page
+            # Get user's products ordered by position
+            user_products = UserProduct.objects.filter(user=user, is_active=True).select_related('record').order_by('position', 'created_at')
+            
+            # Get available records for adding (all records, can be filtered)
+            all_records = Record.objects.all().select_related('level', 'created_by').order_by('-created_at')
+            
+            # Get maximum orders from level
+            max_orders_by_level = user.level.orders_received_count if user.level else 0
+            
+            # Filter records by price range if provided
+            min_price = request.GET.get('min_price', '')
+            max_price = request.GET.get('max_price', '')
+            if min_price:
+                try:
+                    all_records = all_records.filter(price__gte=Decimal(min_price))
+                except (ValueError, InvalidOperation):
+                    pass
+            if max_price:
+                try:
+                    all_records = all_records.filter(price__lte=Decimal(max_price))
+                except (ValueError, InvalidOperation):
+                    pass
+            
+            # Paginate available records for product selection
+            paginator = Paginator(all_records, 20)
+            page_number = request.GET.get('page', 1)
+            page_obj = paginator.get_page(page_number)
+            
+            # Create range for tick marks
+            max_orders_range = range(1, max_orders_by_level + 1) if max_orders_by_level > 0 else []
+            
+            return render(request, 'admin/referral_system/setup_orders.html', {
+                'user': user,
+                'user_products': user_products,
+                'available_records': page_obj,
+                'max_orders_by_level': max_orders_by_level,
+                'max_orders_range': max_orders_range,
+                'opts': self.model._meta,
+                'has_view_permission': self.has_view_permission(request, user),
+            })
         except CustomUser.DoesNotExist:
             messages.error(request, 'User not found')
             return HttpResponseRedirect(reverse('admin:referral_system_customuser_changelist'))
+    
+    def setup_orders_stats_view(self, request, user_id):
+        """AJAX endpoint for real-time order stats"""
+        from django.http import JsonResponse
+        
+        try:
+            user = CustomUser.objects.get(pk=user_id)
+            max_orders_by_level = user.level.orders_received_count if user.level else 0
+            
+            return JsonResponse({
+                'orders_received_today': user.orders_received_today,
+                'taking_orders_today': user.taking_orders_today,
+                'max_orders_by_level': max_orders_by_level,
+                'progress_percentage': round((user.orders_received_today / max_orders_by_level * 100) if max_orders_by_level > 0 else 0, 2),
+            })
+        except CustomUser.DoesNotExist:
+            return JsonResponse({'error': 'User not found'}, status=404)
     
     def reset_order_quantity_view(self, request, user_id):
         """Handle Reset Order Quantity action"""
@@ -586,3 +719,12 @@ class LevelAssignmentAdmin(admin.ModelAdmin):
     search_fields = ['user__username', 'assigned_by__username', 'from_level__name', 'to_level__name']
     readonly_fields = ['assigned_at']
     ordering = ['-assigned_at']
+
+
+@admin.register(UserProduct)
+class UserProductAdmin(admin.ModelAdmin):
+    list_display = ['id', 'user', 'record', 'position', 'is_active', 'created_at']
+    list_filter = ['is_active', 'created_at']
+    search_fields = ['user__username', 'record__title']
+    ordering = ['user', 'position', 'created_at']
+    autocomplete_fields = ['user', 'record']
