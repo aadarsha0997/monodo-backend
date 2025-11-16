@@ -274,7 +274,7 @@ class CustomUserAdmin(BaseUserAdmin):
     readonly_fields = ['date_joined', 'last_login']
     
     class Media:
-        js = ('admin/js/add_debit_modal.js', 'admin/js/reset_order_quantity.js', 'admin/js/more_actions_dropdown.js', 'admin/js/account_details_modal.js', 'admin/js/account_change_modal.js', 'admin/js/wallet_information_modal.js',)
+        js = ('admin/js/add_debit_modal.js', 'admin/js/reset_order_quantity.js', 'admin/js/more_actions_dropdown.js', 'admin/js/account_details_modal.js', 'admin/js/account_change_modal.js', 'admin/js/wallet_information_modal.js', 'admin/js/edit_user_modal.js',)
         css = {
             'all': ('admin/css/add_debit_modal.css', 'admin/css/negative_balance.css', 'admin/css/more_actions_dropdown.css',)
         }
@@ -323,6 +323,11 @@ class CustomUserAdmin(BaseUserAdmin):
                 self.admin_site.admin_view(self.wallet_information_view),
                 name='referral_system_customuser_walletinformation',
             ),
+            path(
+                '<int:user_id>/edit-user/',
+                self.admin_site.admin_view(self.edit_user_view),
+                name='referral_system_customuser_edituser',
+            ),
         ]
         return custom_urls + urls
     
@@ -369,13 +374,13 @@ class CustomUserAdmin(BaseUserAdmin):
                 '<a href="#" class="more-actions-btn" style="background-color: #6c757d; color: white !important; padding: 2px 6px; text-decoration: none; border-radius: 2px; font-size: 10px; font-weight: 600; display: inline-block; white-space: nowrap; cursor: pointer;">More actions</a>'
                 '<div id="more-actions-menu-{}" class="more-actions-menu" style="display: none; position: absolute; top: 100%; left: 0; background: white; border: 1px solid #ddd; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 9999; min-width: 180px; margin-top: 4px; overflow: visible;">'
                 '<a href="#" onclick="event.preventDefault(); openWalletInformationModal({}, \'{}\'); return false;" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px; cursor: pointer;"><span style="margin-right: 8px;">&gt;</span> Wallet Information</a>'
-                '<a href="{}" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px;"><span style="margin-right: 8px;">&gt;</span> Edit</a>'
+                '<a href="#" onclick="event.preventDefault(); openEditUserModal({}, \'{}\'); return false;" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px; cursor: pointer;"><span style="margin-right: 8px;">&gt;</span> Edit</a>'
                 '<a href="#" onclick="event.preventDefault(); openAccountChangeModal({}, \'{}\'); return false;" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px; cursor: pointer;"><span style="margin-right: 8px;">&gt;</span> Account Change</a>'
                 '<a href="#" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px;"><span style="margin-right: 8px;">&gt;</span> Dealing History</a>'
                 '<a href="#" onclick="event.preventDefault(); openAccountDetailsModal({}, \'{}\'); return false;" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; font-size: 13px; cursor: pointer;"><span style="margin-right: 8px;">&gt;</span> Account Details</a>'
                 '</div>'
                 '</div>',
-                user_id, user_id, obj.username, change_url, user_id, obj.username, user_id, obj.username
+                user_id, user_id, obj.username, user_id, obj.username, user_id, obj.username, user_id, obj.username
             )
         return '-'
     more_actions_button.short_description = 'More Actions'
@@ -951,6 +956,247 @@ class CustomUserAdmin(BaseUserAdmin):
             
             # Fallback for non-AJAX requests
             return render(request, 'admin/referral_system/wallet_information.html', {
+                'user': user,
+                'opts': self.model._meta,
+                'has_view_permission': self.has_view_permission(request, user),
+            })
+        except CustomUser.DoesNotExist:
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return JsonResponse({'success': False, 'error': 'User not found'}, status=404)
+            messages.error(request, 'User not found')
+            return HttpResponseRedirect(reverse('admin:referral_system_customuser_changelist'))
+    
+    def edit_user_view(self, request, user_id):
+        """Handle Edit User - Comprehensive edit modal with all fields"""
+        from django.shortcuts import render
+        from django.http import JsonResponse
+        from django.contrib.auth.hashers import make_password
+        
+        try:
+            user = CustomUser.objects.get(pk=user_id)
+            
+            if request.method == 'POST':
+                # Update basic information
+                user.username = request.POST.get('username', user.username)
+                user.phone_number = request.POST.get('phone_number', user.phone_number)
+                
+                # Update email if field exists
+                if hasattr(user, 'email'):
+                    user.email = request.POST.get('email', getattr(user, 'email', ''))
+                
+                user.referral_code = request.POST.get('referral_code', user.referral_code)
+                user.operate = request.POST.get('operate', user.operate)
+                user.place = request.POST.get('place', user.place)
+                
+                # Update account settings
+                user.user_type = request.POST.get('user_type', user.user_type)
+                
+                # Update level
+                level_id = request.POST.get('level')
+                if level_id:
+                    try:
+                        from .models import Level
+                        level = Level.objects.get(pk=level_id)
+                        user.level = level
+                    except Level.DoesNotExist:
+                        pass
+                else:
+                    user.level = None
+                
+                # Update agent
+                agent_id = request.POST.get('agent')
+                if agent_id:
+                    try:
+                        agent = CustomUser.objects.get(pk=agent_id, user_type='AGENT')
+                        user.agent = agent
+                    except CustomUser.DoesNotExist:
+                        pass
+                else:
+                    user.agent = None
+                
+                # Update referred_by
+                referred_by_id = request.POST.get('referred_by')
+                if referred_by_id:
+                    try:
+                        referred_by = CustomUser.objects.get(pk=referred_by_id)
+                        if referred_by.id != user.id:
+                            user.referred_by = referred_by
+                    except CustomUser.DoesNotExist:
+                        pass
+                else:
+                    user.referred_by = None
+                
+                # Update balance & financial
+                if 'balance' in request.POST:
+                    try:
+                        from decimal import Decimal
+                        user.balance = Decimal(request.POST.get('balance', '0.00'))
+                    except (ValueError, TypeError):
+                        pass
+                
+                if 'frozen_amount' in request.POST:
+                    try:
+                        from decimal import Decimal
+                        user.frozen_amount = Decimal(request.POST.get('frozen_amount', '0.00'))
+                    except (ValueError, TypeError):
+                        pass
+                
+                if 'todays_commission' in request.POST:
+                    try:
+                        from decimal import Decimal
+                        user.todays_commission = Decimal(request.POST.get('todays_commission', '0.00'))
+                    except (ValueError, TypeError):
+                        pass
+                
+                if 'credibility' in request.POST:
+                    try:
+                        user.credibility = int(request.POST.get('credibility', 100))
+                        if user.credibility < 0:
+                            user.credibility = 0
+                        elif user.credibility > 100:
+                            user.credibility = 100
+                    except ValueError:
+                        pass
+                
+                user.allow_withdrawal = request.POST.get('allow_withdrawal') == 'on'
+                
+                # Update order tracking
+                if 'available_daily_order' in request.POST:
+                    try:
+                        user.available_daily_order = int(request.POST.get('available_daily_order', 0))
+                        if user.available_daily_order < 0:
+                            user.available_daily_order = 0
+                    except ValueError:
+                        pass
+                
+                if 'taking_orders_today' in request.POST:
+                    try:
+                        user.taking_orders_today = int(request.POST.get('taking_orders_today', 0))
+                        if user.taking_orders_today < 0:
+                            user.taking_orders_today = 0
+                    except ValueError:
+                        pass
+                
+                if 'orders_received_today' in request.POST:
+                    try:
+                        user.orders_received_today = int(request.POST.get('orders_received_today', 0))
+                        if user.orders_received_today < 0:
+                            user.orders_received_today = 0
+                    except ValueError:
+                        pass
+                
+                if 'current_orders_made' in request.POST:
+                    try:
+                        user.current_orders_made = int(request.POST.get('current_orders_made', 0))
+                        if user.current_orders_made < 0:
+                            user.current_orders_made = 0
+                    except ValueError:
+                        pass
+                
+                if 'start_continuous_orders_after' in request.POST:
+                    try:
+                        user.start_continuous_orders_after = int(request.POST.get('start_continuous_orders_after', 0))
+                        if user.start_continuous_orders_after < 0:
+                            user.start_continuous_orders_after = 0
+                    except ValueError:
+                        pass
+                
+                # Update bank account details
+                user.bank_account_holder_name = request.POST.get('bank_account_holder_name', user.bank_account_holder_name)
+                user.bank_account_number = request.POST.get('bank_account_number', user.bank_account_number)
+                user.bank_name = request.POST.get('bank_name', user.bank_name)
+                user.bank_routing_number = request.POST.get('bank_routing_number', user.bank_routing_number)
+                user.bank_account_type = request.POST.get('bank_account_type', user.bank_account_type)
+                
+                # Update permissions & status
+                user.is_active = request.POST.get('is_active') == 'on'
+                user.is_staff = request.POST.get('is_staff') == 'on'
+                user.rob_single = request.POST.get('rob_single') == 'on'
+                
+                # Update passwords if provided
+                password = request.POST.get('password', '').strip()
+                if password:
+                    user.set_password(password)
+                
+                withdraw_password = request.POST.get('withdraw_password', '').strip()
+                if withdraw_password:
+                    user.withdraw_password = make_password(withdraw_password)
+                
+                user.save()
+                
+                if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return JsonResponse({
+                        'success': True,
+                        'message': 'User updated successfully!'
+                    })
+                
+                messages.success(request, 'User updated successfully!')
+                return HttpResponseRedirect(
+                    reverse('admin:referral_system_customuser_change', args=[user_id])
+                )
+            
+            # GET request - return user data as JSON for AJAX
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                from .models import Level
+                
+                # Get all agents for dropdown
+                agents = CustomUser.objects.filter(user_type='AGENT').values('id', 'username')
+                
+                # Get all levels for dropdown
+                levels = []
+                for level in Level.objects.all():
+                    levels.append({
+                        'id': level.id,
+                        'name': level.get_name_display(),
+                    })
+                
+                # Get all users for referred_by dropdown
+                users = CustomUser.objects.all().values('id', 'username')
+                
+                user_data = {
+                    'username': user.username,
+                    'phone_number': user.phone_number,
+                    'referral_code': user.referral_code or '',
+                    'operate': user.operate or '',
+                    'place': user.place or '',
+                    'user_type': user.user_type,
+                    'level_id': user.level.id if user.level else None,
+                    'agent_id': user.agent.id if user.agent else None,
+                    'referred_by_id': user.referred_by.id if user.referred_by else None,
+                    'balance': str(user.balance),
+                    'frozen_amount': str(user.frozen_amount),
+                    'todays_commission': str(user.todays_commission),
+                    'credibility': user.credibility,
+                    'allow_withdrawal': user.allow_withdrawal,
+                    'available_daily_order': user.available_daily_order,
+                    'taking_orders_today': user.taking_orders_today,
+                    'orders_received_today': user.orders_received_today,
+                    'current_orders_made': user.current_orders_made,
+                    'start_continuous_orders_after': user.start_continuous_orders_after,
+                    'bank_account_holder_name': user.bank_account_holder_name or '',
+                    'bank_account_number': user.bank_account_number or '',
+                    'bank_name': user.bank_name or '',
+                    'bank_routing_number': user.bank_routing_number or '',
+                    'bank_account_type': user.bank_account_type or '',
+                    'is_active': user.is_active,
+                    'is_staff': user.is_staff,
+                    'rob_single': user.rob_single,
+                    'agents': list(agents),
+                    'levels': list(levels),
+                    'users': list(users),
+                }
+                
+                # Add email if field exists
+                if hasattr(user, 'email'):
+                    user_data['has_email'] = True
+                    user_data['email'] = user.email or ''
+                else:
+                    user_data['has_email'] = False
+                
+                return JsonResponse(user_data)
+            
+            # Fallback for non-AJAX requests
+            return render(request, 'admin/referral_system/edit_user.html', {
                 'user': user,
                 'opts': self.model._meta,
                 'has_view_permission': self.has_view_permission(request, user),
