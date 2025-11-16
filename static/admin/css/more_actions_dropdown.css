@@ -1,0 +1,100 @@
+.more-actions-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.more-actions-btn {
+    background-color: #6c757d !important;
+    color: white !important;
+    padding: 2px 6px;
+    text-decoration: none;
+    border-radius: 2px;
+    font-size: 10px;
+    font-weight: 600;
+    display: inline-block;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    border: none;
+}
+
+.more-actions-btn:hover {
+    background-color: #5a6268 !important;
+}
+
+.more-actions-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    z-index: 9999 !important;
+    min-width: 180px;
+    max-width: 250px;
+    margin-top: 4px;
+    display: none;
+    padding: 0;
+    list-style: none;
+    animation: fadeIn 0.15s ease-in;
+    overflow: visible !important;
+    white-space: nowrap;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-5px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.more-actions-dropdown:hover .more-actions-menu {
+    display: block !important;
+}
+
+.more-actions-menu:hover {
+    display: block !important;
+}
+
+.more-actions-menu .dropdown-item {
+    display: flex;
+    align-items: center;
+    padding: 10px 15px;
+    color: #212529;
+    text-decoration: none;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 13px;
+    transition: background-color 0.2s;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.more-actions-menu .dropdown-item span {
+    margin-right: 8px;
+    color: #6c757d;
+    font-weight: normal;
+}
+
+.more-actions-menu .dropdown-item:first-child {
+    border-radius: 4px 4px 0 0;
+}
+
+.more-actions-menu .dropdown-item:last-child {
+    border-bottom: none;
+    border-radius: 0 0 4px 4px;
+}
+
+.more-actions-menu .dropdown-item:hover {
+    background-color: #f8f9fa;
+    color: #212529;
+}
+
+.more-actions-menu .dropdown-item:active {
+    background-color: #e9ecef;
+}
+

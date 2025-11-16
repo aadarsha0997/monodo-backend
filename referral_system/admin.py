@@ -274,9 +274,9 @@ class CustomUserAdmin(BaseUserAdmin):
     readonly_fields = ['date_joined', 'last_login']
     
     class Media:
-        js = ('admin/js/add_debit_modal.js', 'admin/js/reset_order_quantity.js',)
+        js = ('admin/js/add_debit_modal.js', 'admin/js/reset_order_quantity.js', 'admin/js/more_actions_dropdown.js', 'admin/js/account_details_modal.js',)
         css = {
-            'all': ('admin/css/add_debit_modal.css', 'admin/css/negative_balance.css',)
+            'all': ('admin/css/add_debit_modal.css', 'admin/css/negative_balance.css', 'admin/css/more_actions_dropdown.css',)
         }
     
     def get_urls(self):
@@ -307,6 +307,11 @@ class CustomUserAdmin(BaseUserAdmin):
                 '<int:user_id>/more-actions/',
                 self.admin_site.admin_view(self.more_actions_view),
                 name='referral_system_customuser_moreactions',
+            ),
+            path(
+                '<int:user_id>/account-details/',
+                self.admin_site.admin_view(self.account_details_view),
+                name='referral_system_customuser_accountdetails',
             ),
         ]
         return custom_urls + urls
@@ -345,12 +350,22 @@ class CustomUserAdmin(BaseUserAdmin):
     reset_order_quantity_button.short_description = 'Reset Qty'
     
     def more_actions_button(self, obj):
-        """Display More Actions button with green color"""
+        """Display More Actions button with dropdown menu on hover"""
         if obj.pk:
-            url = reverse('admin:referral_system_customuser_moreactions', args=[obj.pk])
+            user_id = obj.pk
+            change_url = reverse('admin:referral_system_customuser_change', args=[obj.pk])
             return format_html(
-                '<a href="{}" style="background-color: #28a745; color: white !important; padding: 2px 6px; text-decoration: none; border-radius: 2px; font-size: 10px; font-weight: 600; display: inline-block; white-space: nowrap;">More Actions</a>',
-                url
+                '<div class="more-actions-dropdown" style="position: relative; display: inline-block;">'
+                '<a href="#" class="more-actions-btn" style="background-color: #6c757d; color: white !important; padding: 2px 6px; text-decoration: none; border-radius: 2px; font-size: 10px; font-weight: 600; display: inline-block; white-space: nowrap; cursor: pointer;">More actions</a>'
+                '<div id="more-actions-menu-{}" class="more-actions-menu" style="display: none; position: absolute; top: 100%; left: 0; background: white; border: 1px solid #ddd; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 9999; min-width: 180px; margin-top: 4px; overflow: visible;">'
+                '<a href="#" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px;"><span style="margin-right: 8px;">&gt;</span> Wallet Information</a>'
+                '<a href="{}" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px;"><span style="margin-right: 8px;">&gt;</span> Edit</a>'
+                '<a href="#" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px;"><span style="margin-right: 8px;">&gt;</span> Account Change</a>'
+                '<a href="#" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px;"><span style="margin-right: 8px;">&gt;</span> Dealing History</a>'
+                '<a href="#" onclick="event.preventDefault(); openAccountDetailsModal({}, \'{}\'); return false;" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; font-size: 13px; cursor: pointer;"><span style="margin-right: 8px;">&gt;</span> Account Details</a>'
+                '</div>'
+                '</div>',
+                user_id, change_url, user_id, obj.username
             )
         return '-'
     more_actions_button.short_description = 'More Actions'
@@ -582,10 +597,12 @@ class CustomUserAdmin(BaseUserAdmin):
     
     def reset_order_quantity_view(self, request, user_id):
         """Handle Reset Order Quantity - Reset all order tracking and balance to default"""
+        from django.http import JsonResponse
+        
         try:
             user = CustomUser.objects.get(pk=user_id)
             
-            # Store old values for message
+            # Store old values for response
             old_balance = user.balance
             old_orders_received = user.orders_received_today
             old_taking_orders = user.taking_orders_today
@@ -609,6 +626,26 @@ class CustomUserAdmin(BaseUserAdmin):
                 'balance'
             ])
             
+            # Return JSON response for AJAX
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                messages.success(
+                    request,
+                    f'User {user.username} reset successfully! '
+                    f'Balance: ${old_balance} → ${user.balance}, '
+                    f'Orders Received: {old_orders_received} → 0, '
+                    f'Taking Orders: {old_taking_orders} → 0, '
+                    f'Current Orders: {old_current_orders} → 0'
+                )
+                return JsonResponse({
+                    'success': True,
+                    'message': f'User {user.username} reset successfully!',
+                    'new_balance': str(user.balance),
+                    'new_orders_received': user.orders_received_today,
+                    'new_taking_orders': user.taking_orders_today,
+                    'new_current_orders': user.current_orders_made,
+                })
+            
+            # Fallback for non-AJAX requests
             messages.success(
                 request,
                 f'User {user.username} reset successfully! '
@@ -621,6 +658,87 @@ class CustomUserAdmin(BaseUserAdmin):
                 reverse('admin:referral_system_customuser_change', args=[user_id])
             )
         except CustomUser.DoesNotExist:
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return JsonResponse({'success': False, 'error': 'User not found'}, status=404)
+            messages.error(request, 'User not found')
+            return HttpResponseRedirect(reverse('admin:referral_system_customuser_changelist'))
+    
+    def account_details_view(self, request, user_id):
+        """Handle Account Details - Display and edit account details via AJAX"""
+        from django.shortcuts import render
+        from django.http import JsonResponse
+        
+        try:
+            user = CustomUser.objects.get(pk=user_id)
+            
+            if request.method == 'POST':
+                # Update account details
+                user.username = request.POST.get('username', user.username)
+                user.phone_number = request.POST.get('phone_number', user.phone_number)
+                if hasattr(user, 'email'):
+                    user.email = request.POST.get('email', getattr(user, 'email', ''))
+                user.operate = request.POST.get('operate', user.operate)
+                user.place = request.POST.get('place', user.place)
+                user.is_active = request.POST.get('is_active') == 'on'
+                
+                # Update bank account details if provided
+                if 'bank_account_number' in request.POST:
+                    user.bank_account_number = request.POST.get('bank_account_number', '')
+                if 'bank_account_holder_name' in request.POST:
+                    user.bank_account_holder_name = request.POST.get('bank_account_holder_name', '')
+                if 'bank_name' in request.POST:
+                    user.bank_name = request.POST.get('bank_name', '')
+                if 'bank_routing_number' in request.POST:
+                    user.bank_routing_number = request.POST.get('bank_routing_number', '')
+                if 'bank_account_type' in request.POST:
+                    user.bank_account_type = request.POST.get('bank_account_type', 'checking')
+                
+                user.save()
+                
+                if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return JsonResponse({
+                        'success': True,
+                        'message': 'Account details updated successfully!'
+                    })
+                
+                messages.success(request, 'Account details updated successfully!')
+                return HttpResponseRedirect(
+                    reverse('admin:referral_system_customuser_change', args=[user_id])
+                )
+            
+            # GET request - return account details as JSON for AJAX
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                user_data = {
+                    'id': user.id,
+                    'username': user.username,
+                    'phone_number': user.phone_number or '',
+                    'operate': user.operate or '',
+                    'place': user.place or '',
+                    'is_active': user.is_active,
+                    'bank_account_number': user.bank_account_number or '',
+                    'bank_account_holder_name': user.bank_account_holder_name or '',
+                    'bank_name': user.bank_name or '',
+                    'bank_routing_number': user.bank_routing_number or '',
+                    'bank_account_type': user.bank_account_type or 'checking',
+                    'balance': str(user.balance),
+                    'level': user.level.get_name_display() if user.level else 'No Level',
+                    'user_type': user.get_user_type_display(),
+                    'date_joined': user.date_joined.strftime('%Y-%m-%d %H:%M:%S') if user.date_joined else '',
+                    'last_login': user.last_login.strftime('%Y-%m-%d %H:%M:%S') if user.last_login else '',
+                }
+                if hasattr(user, 'email'):
+                    user_data['email'] = user.email or ''
+                return JsonResponse(user_data)
+            
+            # Fallback for non-AJAX requests
+            return render(request, 'admin/referral_system/account_details.html', {
+                'user': user,
+                'opts': self.model._meta,
+                'has_view_permission': self.has_view_permission(request, user),
+            })
+        except CustomUser.DoesNotExist:
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return JsonResponse({'success': False, 'error': 'User not found'}, status=404)
             messages.error(request, 'User not found')
             return HttpResponseRedirect(reverse('admin:referral_system_customuser_changelist'))
     

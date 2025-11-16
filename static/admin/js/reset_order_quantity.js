@@ -73,13 +73,18 @@ function confirmResetOrder(userId, username) {
         },
         credentials: 'same-origin'
     })
-    .then(response => {
-        if (response.ok || response.redirected) {
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
             closeResetOrderModal();
-            // Reload the page to show updated values
-            window.location.reload();
+            
+            // Update values on the page without reload
+            updateUserValues(data);
+            
+            // Show success message
+            showSuccessMessage(data.message);
         } else {
-            throw new Error('Reset failed');
+            throw new Error(data.error || 'Reset failed');
         }
     })
     .catch(error => {
@@ -88,6 +93,67 @@ function confirmResetOrder(userId, username) {
         confirmBtn.innerHTML = originalText;
         alert('An error occurred while resetting. Please try again.');
     });
+}
+
+function updateUserValues(data) {
+    // Update balance field if visible
+    const balanceField = document.querySelector('input[name="balance"]');
+    if (balanceField) {
+        balanceField.value = data.new_balance;
+    }
+    
+    // Update orders_received_today field if visible
+    const ordersReceivedField = document.querySelector('input[name="orders_received_today"]');
+    if (ordersReceivedField) {
+        ordersReceivedField.value = data.new_orders_received;
+    }
+    
+    // Update taking_orders_today field if visible
+    const takingOrdersField = document.querySelector('input[name="taking_orders_today"]');
+    if (takingOrdersField) {
+        takingOrdersField.value = data.new_taking_orders;
+    }
+    
+    // Update current_orders_made field if visible
+    const currentOrdersField = document.querySelector('input[name="current_orders_made"]');
+    if (currentOrdersField) {
+        currentOrdersField.value = data.new_current_orders;
+    }
+    
+    // Update list display values if on changelist page
+    const balanceDisplay = document.querySelector('.balance_display');
+    if (balanceDisplay) {
+        balanceDisplay.textContent = '$' + data.new_balance;
+    }
+    
+    // Update any displayed values in the list
+    const rows = document.querySelectorAll('tr[data-user-id]');
+    rows.forEach(row => {
+        // Update balance in list if present
+        const balanceCell = row.querySelector('.field-balance');
+        if (balanceCell) {
+            balanceCell.textContent = '$' + data.new_balance;
+        }
+    });
+}
+
+function showSuccessMessage(message) {
+    // Create a temporary success message
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'alert alert-success alert-dismissible';
+    messageDiv.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 10000; min-width: 300px;';
+    messageDiv.innerHTML = `
+        <button type="button" class="close" data-dismiss="alert" aria-hidden="true" onclick="this.parentElement.remove()">×</button>
+        <strong>Success!</strong> ${message}
+    `;
+    document.body.appendChild(messageDiv);
+    
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        if (messageDiv.parentElement) {
+            messageDiv.remove();
+        }
+    }, 5000);
 }
 
 function getCookie(name) {
