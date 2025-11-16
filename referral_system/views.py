@@ -407,9 +407,18 @@ class UserRecordImagesView(APIView):
                 status=status.HTTP_200_OK
             )
 
+        # Check if there's a status filter in query parameters
+        status_filter = request.GET.get('status', '').upper()
+        filter_by_status = status_filter in ['PENDING', 'COMPLETED', 'CANCELLED']
+        
+        # Build base queryset
+        status_list = ['PENDING', 'COMPLETED']
+        if filter_by_status:
+            status_list = [status_filter]
+        
         records = Record.objects.filter(
             level=level,
-            status__in=['PENDING', 'COMPLETED']
+            status__in=status_list
         ).select_related(
             'level',
             'created_by'
@@ -428,11 +437,86 @@ class UserRecordImagesView(APIView):
             )
         ).order_by('status_order', 'title')
 
+        # Get user and refresh from database to get latest data
+        user = request.user
+        user.refresh_from_db()
+        user_balance = user.balance or Decimal('0.00')
+        
+        # If filtering by status, show all records matching that status
+        if filter_by_status:
+            if status_filter == 'PENDING':
+                # When filtering by PENDING, show all pending records (user can submit any of them)
+                records_list = list(records)
+            elif status_filter == 'COMPLETED':
+                # When filtering by COMPLETED, show all completed records
+                records_list = list(records)
+            else:
+                records_list = list(records)
+        else:
+            # Default behavior: Filter to show:
+            # 1. All completed records
+            # 2. The first pending record with insufficient balance (if any)
+            # 3. If no insufficient balance records, the first pending record with sufficient balance
+            
+            pending_records = [r for r in records if r.status == 'PENDING']
+            completed_records = [r for r in records if r.status == 'COMPLETED']
+            insufficient_balance_records = []
+            sufficient_balance_records = []
+            
+            for record in pending_records:
+                record_price = record.price or Decimal('0.00')
+                if user_balance < record_price:
+                    # Balance is insufficient for this record
+                    insufficient_balance_records.append(record)
+                else:
+                    # Balance is sufficient for this record
+                    sufficient_balance_records.append(record)
+            
+            # Build records list: completed records + one pending record
+            records_list = completed_records.copy()  # Include all completed records
+            
+            # Add the appropriate pending record
+            if insufficient_balance_records:
+                # Show only the first pending record with insufficient balance
+                records_list.append(insufficient_balance_records[0])
+            elif sufficient_balance_records:
+                # Show only the first pending record with sufficient balance
+                records_list.append(sufficient_balance_records[0])
+            # If no pending records, only completed records are shown
+
         serializer = UserRecordSerializer(
-            records,
+            records_list,
             many=True,
             context={'request': request}
         )
+
+        # Count completed records for completion message
+        # Get all records (not just shown ones) to count completed
+        all_records = list(records)
+        completed_count = sum(1 for r in all_records if r.status == 'COMPLETED')
+        
+        # Count total pending records for context
+        total_pending = len(pending_records)
+        total_insufficient = len(insufficient_balance_records)
+        
+        all_completed = False
+        completion_message = None
+        
+        # Limit based on available_daily_order or level's orders_received_count
+        limit = None
+        if user.available_daily_order and user.available_daily_order > 0:
+            limit = user.available_daily_order
+        elif level.orders_received_count and level.orders_received_count > 0:
+            limit = level.orders_received_count
+        
+        if limit and limit > 0:
+            if completed_count >= limit:
+                all_completed = True
+                level_name = level.get_name_display() if level else "your level"
+                completion_message = f"Congratulations! You have completed all {limit} orders for the {level_name} level."
+            else:
+                remaining = limit - completed_count
+                completion_message = f"You have {remaining} order(s) remaining out of {limit} for the {level.get_name_display() if level else 'your'} level."
 
         user_level = {
             'id': str(level.id),
@@ -440,13 +524,21 @@ class UserRecordImagesView(APIView):
             'display_name': level.get_name_display(),
             'commission_rate': str(level.commission_rate),
             'minimum_balance': str(level.minimum_balance),
+            'orders_received_count': level.orders_received_count,
         }
-
+        
         return Response({
-            'total_records': records.count(),
+            'total_records': len(serializer.data),  # Use actual returned count
             'user_level': user_level,
             'records': serializer.data,
-            'user_balance': str(request.user.balance),
+            'user_balance': str(user.balance or Decimal('0.00')),
+            'todays_commission': str(user.todays_commission or Decimal('0.00')),
+            'available_daily_order': user.available_daily_order,
+            'completed_count': completed_count,
+            'all_completed': all_completed,
+            'completion_message': completion_message,
+            'limit': limit,
+            'frozen_amount': str(user.frozen_amount or Decimal('0.00')),
         }, status=status.HTTP_200_OK)
 
 
@@ -473,19 +565,53 @@ class RecordSubmitReviewView(APIView):
         except Review.DoesNotExist:
             return Response({'detail': 'Review not associated with this record.'}, status=status.HTTP_404_NOT_FOUND)
 
+        # Check if user has sufficient balance before allowing submission
+        user = request.user
+        user.refresh_from_db()  # Get latest balance
+        user_balance = user.balance or Decimal('0.00')
+        record_price = record.price or Decimal('0.00')
+        
+        # Calculate insufficient amount if balance is less than price
+        if user_balance < record_price:
+            insufficient_amount = record_price - user_balance
+            
+            # Update frozen amount with the insufficient amount
+            from django.db import transaction
+            with transaction.atomic():
+                user = CustomUser.objects.select_for_update().get(pk=user.pk)
+                current_frozen = user.frozen_amount or Decimal('0.00')
+                # Set frozen amount to insufficient amount (replace, not accumulate)
+                user.frozen_amount = insufficient_amount
+                user.save(update_fields=['frozen_amount'])
+                user.refresh_from_db()
+            
+            return Response({
+                'detail': f'Balance not sufficient. You need ${record_price:.2f} but you have ${user_balance:.2f}. Please deposit ${insufficient_amount:.2f} to proceed.',
+                'error': 'insufficient_balance',
+                'required_amount': str(record_price),
+                'current_balance': str(user_balance),
+                'insufficient_amount': str(insufficient_amount),
+                'frozen_amount': str(user.frozen_amount)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Balance is sufficient, proceed with submission
         record.status = 'COMPLETED'
         record.completed_at = timezone.now()
         record.save()
 
-        user = request.user
         user.taking_orders_today = (user.taking_orders_today or 0) + 1
         user.orders_received_today = (user.orders_received_today or 0) + 1
         
-        # Add commission to user balance when task is completed
+        # Add commission to user balance and todays_commission when task is completed
         if record.commission:
-            user.balance = (user.balance or Decimal('0.00')) + record.commission
+            commission_amount = record.commission
+            user.balance = (user.balance or Decimal('0.00')) + commission_amount
+            user.todays_commission = (user.todays_commission or Decimal('0.00')) + commission_amount
         
-        user.save(update_fields=['taking_orders_today', 'orders_received_today', 'balance'])
+        # Reset frozen_amount to 0 when balance becomes sufficient and user submits
+        user.frozen_amount = Decimal('0.00')
+        
+        user.save(update_fields=['taking_orders_today', 'orders_received_today', 'balance', 'todays_commission', 'frozen_amount'])
 
         serializer = UserRecordSerializer(record, context={'request': request})
         return Response({
@@ -493,7 +619,9 @@ class RecordSubmitReviewView(APIView):
             'user_stats': {
                 'orders_received_today': user.orders_received_today,
                 'taking_orders_today': user.taking_orders_today,
-                'balance': str(user.balance)
+                'balance': str(user.balance),
+                'todays_commission': str(user.todays_commission),
+                'frozen_amount': str(user.frozen_amount)
             }
         }, status=status.HTTP_200_OK)
 

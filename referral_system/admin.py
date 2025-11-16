@@ -199,10 +199,31 @@ class CustomUserAdmin(BaseUserAdmin):
     last_login_time.short_description = 'Last Login Time'
     
     def save_model(self, request, obj, form, change):
-        """Set withdraw_password from form if provided"""
+        """Set withdraw_password from form if provided and ensure available_daily_order matches level"""
         if not change and hasattr(form, 'cleaned_data'):
             if 'withdraw_password' in form.cleaned_data:
                 obj.withdraw_password = form.cleaned_data['withdraw_password']
+        
+        # Ensure available_daily_order matches level's orders_received_count
+        # This ensures it's set correctly even if form field is manually edited
+        if hasattr(form, 'cleaned_data') and 'level' in form.cleaned_data:
+            level = form.cleaned_data.get('level')
+            if level and hasattr(level, 'orders_received_count'):
+                # Always update available_daily_order to match level's orders_received_count
+                # when level is set (for new users) or changed (for existing users)
+                if not change:
+                    # New user - always set it
+                    obj.available_daily_order = level.orders_received_count
+                elif change:
+                    # Existing user - only update if level changed
+                    try:
+                        old_obj = self.model.objects.get(pk=obj.pk)
+                        if old_obj.level != level:
+                            obj.available_daily_order = level.orders_received_count
+                    except self.model.DoesNotExist:
+                        # Fallback: if we can't get old instance, set it anyway
+                        obj.available_daily_order = level.orders_received_count
+        
         super().save_model(request, obj, form, change)
     
     fieldsets = (
@@ -273,8 +294,15 @@ class CustomUserAdmin(BaseUserAdmin):
     
     readonly_fields = ['date_joined', 'last_login']
     
+    def changelist_view(self, request, extra_context=None):
+        """Override changelist to enable real-time updates"""
+        response = super().changelist_view(request, extra_context)
+        if hasattr(response, 'context_data'):
+            response.context_data['enable_realtime_updates'] = True
+        return response
+    
     class Media:
-        js = ('admin/js/add_debit_modal.js', 'admin/js/reset_order_quantity.js', 'admin/js/more_actions_dropdown.js', 'admin/js/account_details_modal.js', 'admin/js/account_change_modal.js', 'admin/js/wallet_information_modal.js', 'admin/js/edit_user_modal.js',)
+        js = ('admin/js/add_debit_modal.js', 'admin/js/reset_order_quantity.js', 'admin/js/more_actions_dropdown.js', 'admin/js/account_details_modal.js', 'admin/js/account_change_modal.js', 'admin/js/wallet_information_modal.js', 'admin/js/edit_user_modal.js', 'admin/js/user_level_autofill.js', 'admin/js/realtime_user_stats.js',)
         css = {
             'all': ('admin/css/add_debit_modal.css', 'admin/css/negative_balance.css', 'admin/css/more_actions_dropdown.css',)
         }
@@ -328,8 +356,73 @@ class CustomUserAdmin(BaseUserAdmin):
                 self.admin_site.admin_view(self.edit_user_view),
                 name='referral_system_customuser_edituser',
             ),
+            path(
+                '<int:user_id>/dealing-history/',
+                self.admin_site.admin_view(self.dealing_history_view),
+                name='referral_system_customuser_dealinghistory',
+            ),
+            path(
+                'level/<int:level_id>/get-orders-count/',
+                self.admin_site.admin_view(self.get_level_orders_count),
+                name='referral_system_level_get_orders_count',
+            ),
+            path(
+                'get-user-stats/',
+                self.admin_site.admin_view(self.get_user_stats_view),
+                name='referral_system_customuser_getstats',
+            ),
         ]
         return custom_urls + urls
+    
+    def get_level_orders_count(self, request, level_id):
+        """API endpoint to get level's orders_received_count for JavaScript"""
+        from django.http import JsonResponse
+        try:
+            from .models import Level
+            level = Level.objects.get(pk=level_id)
+            return JsonResponse({
+                'orders_received_count': level.orders_received_count,
+                'level_name': level.get_name_display(),
+            })
+        except Level.DoesNotExist:
+            return JsonResponse({'error': 'Level not found'}, status=404)
+    
+    def get_user_stats_view(self, request):
+        """API endpoint to get user stats for real-time updates"""
+        from django.http import JsonResponse
+        user_ids = request.GET.getlist('user_ids[]')
+        
+        if not user_ids:
+            return JsonResponse({'error': 'No user IDs provided'}, status=400)
+        
+        try:
+            user_ids_int = [int(uid) for uid in user_ids]
+            users = CustomUser.objects.filter(pk__in=user_ids_int).values(
+                'id',
+                'available_daily_order',
+                'taking_orders_today',
+                'current_orders_made',
+                'orders_received_today',
+                'todays_commission',
+                'balance',
+                'frozen_amount'
+            )
+            
+            stats = {}
+            for user in users:
+                stats[str(user['id'])] = {
+                    'available_daily_order': user['available_daily_order'] or 0,
+                    'taking_orders_today': user['taking_orders_today'] or 0,
+                    'current_orders_made': user['current_orders_made'] or 0,
+                    'orders_received_today': user['orders_received_today'] or 0,
+                    'todays_commission': str(user['todays_commission'] or 0),
+                    'balance': str(user['balance'] or 0),
+                    'frozen_amount': str(user['frozen_amount'] or 0),
+                }
+            
+            return JsonResponse({'stats': stats})
+        except (ValueError, CustomUser.DoesNotExist) as e:
+            return JsonResponse({'error': str(e)}, status=400)
     
     def add_debit_button(self, obj):
         """Display Add Debit button with blood red color - opens modal"""
@@ -376,11 +469,11 @@ class CustomUserAdmin(BaseUserAdmin):
                 '<a href="#" onclick="event.preventDefault(); openWalletInformationModal({}, \'{}\'); return false;" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px; cursor: pointer;"><span style="margin-right: 8px;">&gt;</span> Wallet Information</a>'
                 '<a href="#" onclick="event.preventDefault(); openEditUserModal({}, \'{}\'); return false;" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px; cursor: pointer;"><span style="margin-right: 8px;">&gt;</span> Edit</a>'
                 '<a href="#" onclick="event.preventDefault(); openAccountChangeModal({}, \'{}\'); return false;" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px; cursor: pointer;"><span style="margin-right: 8px;">&gt;</span> Account Change</a>'
-                '<a href="#" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px;"><span style="margin-right: 8px;">&gt;</span> Dealing History</a>'
+                '<a href="/admin/referral_system/customuser/{}/dealing-history/" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; border-bottom: 1px solid #f0f0f0; font-size: 13px;"><span style="margin-right: 8px;">&gt;</span> Dealing History</a>'
                 '<a href="#" onclick="event.preventDefault(); openAccountDetailsModal({}, \'{}\'); return false;" class="dropdown-item" style="display: block; padding: 10px 15px; color: #212529; text-decoration: none; font-size: 13px; cursor: pointer;"><span style="margin-right: 8px;">&gt;</span> Account Details</a>'
                 '</div>'
                 '</div>',
-                user_id, user_id, obj.username, user_id, obj.username, user_id, obj.username, user_id, obj.username
+                user_id, user_id, obj.username, user_id, obj.username, user_id, obj.username, user_id, user_id, obj.username
             )
         return '-'
     more_actions_button.short_description = 'More Actions'
@@ -1205,6 +1298,71 @@ class CustomUserAdmin(BaseUserAdmin):
             if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
                 return JsonResponse({'success': False, 'error': 'User not found'}, status=404)
             messages.error(request, 'User not found')
+            return HttpResponseRedirect(reverse('admin:referral_system_customuser_changelist'))
+    
+    def dealing_history_view(self, request, user_id):
+        """Handle Dealing History - Show all records/orders the user has interacted with"""
+        from django.shortcuts import render
+        from django.core.paginator import Paginator
+        from .models import UserProduct, Record
+        
+        try:
+            user = CustomUser.objects.get(pk=user_id)
+            
+            # Get all UserProduct entries for this user (which links to records)
+            user_products = UserProduct.objects.filter(user=user).select_related('record').order_by('-created_at')
+            
+            # Determine limit based on available_daily_order or level's orders_received_count
+            limit = None
+            if user.available_daily_order and user.available_daily_order > 0:
+                limit = user.available_daily_order
+            elif user.level and user.level.orders_received_count and user.level.orders_received_count > 0:
+                limit = user.level.orders_received_count
+            
+            # Extract records from user_products
+            records = []
+            seen_record_ids = set()  # To avoid duplicates
+            
+            for user_product in user_products:
+                if user_product.record and user_product.record.id not in seen_record_ids:
+                    seen_record_ids.add(user_product.record.id)
+                    records.append({
+                        'id': user_product.record.id,
+                        'product_name': user_product.record.title,
+                        'price': user_product.record.price,
+                        'ticket': user_product.record.id,  # Using record ID as ticket
+                        'status': user_product.record.get_status_display(),
+                        'status_value': user_product.record.status,
+                        'created_at': user_product.record.created_at,
+                        'user_product_id': user_product.id,
+                    })
+                    
+                    # Apply limit if specified
+                    if limit and len(records) >= limit:
+                        break
+            
+            # Pagination
+            paginator = Paginator(records, 25)  # Show 25 records per page
+            page_number = request.GET.get('page', 1)
+            try:
+                page_obj = paginator.get_page(page_number)
+            except:
+                page_obj = paginator.get_page(1)
+            
+            context = {
+                'user': user,
+                'records': page_obj,
+                'total_records': len(records),
+                'opts': self.model._meta,
+                'has_view_permission': self.has_view_permission(request, user),
+            }
+            
+            return render(request, 'admin/referral_system/dealing_history.html', context)
+        except CustomUser.DoesNotExist:
+            messages.error(request, 'User not found')
+            return HttpResponseRedirect(reverse('admin:referral_system_customuser_changelist'))
+        except Exception as e:
+            messages.error(request, f'Error loading dealing history: {str(e)}')
             return HttpResponseRedirect(reverse('admin:referral_system_customuser_changelist'))
     
     def more_actions_view(self, request, user_id):

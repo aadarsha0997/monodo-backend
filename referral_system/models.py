@@ -326,9 +326,13 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         
         # If level is selected, set available_daily_order from level's orders_received_count
         # This happens when creating a new user with a level, or when level is changed
-        if self.level and (is_new_user or level_changed):
-            # Set available_daily_order to level's orders_received_count
-            self.available_daily_order = self.level.orders_received_count
+        if self.level:
+            if is_new_user or level_changed:
+                # Set available_daily_order to level's orders_received_count
+                self.available_daily_order = self.level.orders_received_count
+            elif not self.available_daily_order or self.available_daily_order == 0:
+                # If available_daily_order is 0 or not set, sync it with level
+                self.available_daily_order = self.level.orders_received_count
         
         # Generate referral code if not set
         if not self.referral_code:

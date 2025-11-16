@@ -1,0 +1,47 @@
+{% extends "admin/change_list.html" %}
+{% load static %}
+
+{% block extrahead %}
+{{ block.super }}
+<style>
+    .updated-field {
+        background-color: #d4edda !important;
+        transition: background-color 0.5s ease;
+    }
+    .field-available_daily_order,
+    .field-taking_orders_today,
+    .field-current_orders_made,
+    .field-orders_received_today,
+    .field-todays_commission {
+        position: relative;
+    }
+</style>
+{% endblock %}
+
+{% block result_list %}
+{{ block.super }}
+<script>
+// Add data-user-id attribute to each row for easier identification
+(function() {
+    document.addEventListener('DOMContentLoaded', function() {
+        const rows = document.querySelectorAll('#result_list tbody tr');
+        rows.forEach(function(row) {
+            const checkbox = row.querySelector('input[name="_selected_action"]');
+            if (checkbox && checkbox.value) {
+                row.setAttribute('data-user-id', checkbox.value);
+            } else {
+                // Try to get from first cell (ID column)
+                const firstCell = row.querySelector('td:first-child');
+                if (firstCell) {
+                    const id = firstCell.textContent.trim();
+                    if (id && !isNaN(id)) {
+                        row.setAttribute('data-user-id', id);
+                    }
+                }
+            }
+        });
+    });
+})();
+</script>
+{% endblock %}
+

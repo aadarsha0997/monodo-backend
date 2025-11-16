@@ -1,0 +1,221 @@
+{% extends "admin/base_site.html" %}
+{% load static i18n %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+    .dealing-history-container {
+        padding: 20px;
+        background: #f8f9fa;
+        min-height: 100vh;
+    }
+    .content-header {
+        background: white;
+        padding: 20px 30px;
+        margin-bottom: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .content-header h1 {
+        margin: 0;
+        font-size: 24px;
+        color: #212529;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .records-table-container {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        overflow: hidden;
+    }
+    .table {
+        width: 100%;
+        margin: 0;
+        border-collapse: collapse;
+    }
+    .table thead {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+    .table thead th {
+        padding: 15px 20px;
+        text-align: left;
+        font-weight: 600;
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .table tbody tr {
+        border-bottom: 1px solid #e9ecef;
+        transition: background-color 0.2s;
+    }
+    .table tbody tr:hover {
+        background-color: #f8f9fa;
+    }
+    .table tbody tr:last-child {
+        border-bottom: none;
+    }
+    .table tbody td {
+        padding: 15px 20px;
+        font-size: 14px;
+        color: #495057;
+    }
+    .status-badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+    .status-pending {
+        background-color: #fff3cd;
+        color: #856404;
+    }
+    .status-completed {
+        background-color: #d4edda;
+        color: #155724;
+    }
+    .status-cancelled {
+        background-color: #f8d7da;
+        color: #721c24;
+    }
+    .pagination {
+        padding: 20px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 10px;
+    }
+    .pagination a, .pagination span {
+        padding: 8px 12px;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        text-decoration: none;
+        color: #495057;
+        font-size: 14px;
+    }
+    .pagination .current {
+        background-color: #667eea;
+        color: white;
+        border-color: #667eea;
+    }
+    .pagination a:hover {
+        background-color: #e9ecef;
+    }
+    .no-records {
+        padding: 40px;
+        text-align: center;
+        color: #6c757d;
+    }
+    .stats-bar {
+        background: white;
+        padding: 20px 30px;
+        margin-bottom: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .stats-item {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+    }
+    .stats-label {
+        font-size: 12px;
+        color: #6c757d;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .stats-value {
+        font-size: 24px;
+        font-weight: 700;
+        color: #212529;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dealing-history-container">
+    <div class="content-header">
+        <h1>
+            <i class="fas fa-history" style="color: #667eea;"></i>
+            Dealing History - {{ user.username }}
+        </h1>
+    </div>
+    
+    <div class="stats-bar">
+        <div class="stats-item">
+            <span class="stats-label">Total Records</span>
+            <span class="stats-value">{{ total_records }}</span>
+        </div>
+        <div class="stats-item">
+            <a href="{% url 'admin:referral_system_customuser_changelist' %}" style="color: #667eea; text-decoration: none; font-weight: 600;">
+                <i class="fas fa-arrow-left"></i> Back to Users
+            </a>
+        </div>
+    </div>
+    
+    <div class="records-table-container">
+        {% if records %}
+            <table class="table">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Product Name</th>
+                        <th>Price</th>
+                        <th>Ticket</th>
+                        <th>Status</th>
+                        <th>Created At</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for record in records %}
+                    <tr>
+                        <td>{{ record.id }}</td>
+                        <td>{{ record.product_name }}</td>
+                        <td>${{ record.price }}</td>
+                        <td>{{ record.ticket }}</td>
+                        <td>
+                            <span class="status-badge status-{{ record.status_value|lower }}">
+                                {{ record.status }}
+                            </span>
+                        </td>
+                        <td>{{ record.created_at|date:"Y-m-d H:i:s" }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            
+            {% if records.has_other_pages %}
+            <div class="pagination">
+                {% if records.has_previous %}
+                    <a href="?page=1">&laquo; First</a>
+                    <a href="?page={{ records.previous_page_number }}">Previous</a>
+                {% endif %}
+                
+                <span class="current">
+                    Page {{ records.number }} of {{ records.paginator.num_pages }}
+                </span>
+                
+                {% if records.has_next %}
+                    <a href="?page={{ records.next_page_number }}">Next</a>
+                    <a href="?page={{ records.paginator.num_pages }}">Last &raquo;</a>
+                {% endif %}
+            </div>
+            {% endif %}
+        {% else %}
+            <div class="no-records">
+                <i class="fas fa-inbox" style="font-size: 48px; color: #dee2e6; margin-bottom: 15px;"></i>
+                <p style="font-size: 18px; margin: 0;">No records found for this user</p>
+                <p style="font-size: 14px; color: #6c757d; margin: 5px 0 0 0;">This user hasn't performed any actions on records yet.</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
