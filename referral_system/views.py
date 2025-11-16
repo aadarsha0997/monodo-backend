@@ -5,6 +5,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.db.models import Count, Q, Prefetch, Case, When, IntegerField, Value
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
+from decimal import Decimal
 from .models import CustomUser, ReferralTracking, Record, LoginActivity, Level, Review
 from   .serializers import (
     UserRegistrationSerializer,
@@ -436,8 +437,7 @@ class UserRecordImagesView(APIView):
         user_level = {
             'id': str(level.id),
             'name': level.name,
-            'display_name': level.display_name,
-            'image_upload_limit': level.image_upload_limit,
+            'display_name': level.get_name_display(),
             'commission_rate': str(level.commission_rate),
             'minimum_balance': str(level.minimum_balance),
         }
@@ -479,7 +479,12 @@ class RecordSubmitReviewView(APIView):
 
         user = request.user
         user.taking_orders_today = (user.taking_orders_today or 0) + 1
-        user.save(update_fields=['taking_orders_today'])
+        
+        # Add commission to user balance when task is completed
+        if record.commission:
+            user.balance = (user.balance or Decimal('0.00')) + record.commission
+        
+        user.save(update_fields=['taking_orders_today', 'balance'])
 
         serializer = UserRecordSerializer(record, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)

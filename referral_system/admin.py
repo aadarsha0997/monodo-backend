@@ -1,37 +1,108 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth.forms import UserCreationForm, UserChangeForm
-from .models import CustomUser, ReferralTracking, Record, Level, LevelUpgrade, LevelAssignment, LoginActivity, Review
+from django import forms
 from django.urls import path, reverse
-from django.shortcuts import render
 from django.utils.html import format_html
-from .models import CustomUser, ReferralTracking
+from django.shortcuts import redirect
+from django.contrib import messages
+from django.http import HttpResponseRedirect
+from .models import CustomUser, ReferralTracking, Record, Level, LevelUpgrade, LevelAssignment, LoginActivity, Review
 
 
 class CustomUserCreationForm(UserCreationForm):
+    phone_number = forms.CharField(
+        max_length=15,
+        required=True,
+        help_text="Required. Must be unique."
+    )
+    withdraw_password = forms.CharField(
+        max_length=128,
+        widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}),
+        required=True,
+        help_text="This is the secondary password used for withdrawals.",
+        label="Withdrawal Password"
+    )
+    
     class Meta(UserCreationForm.Meta):
         model = CustomUser
-        fields = (
-            'username',
-            'phone_number',
-            'withdraw_password',
-            'user_type',
-            'level',
-            'balance',
-            'referred_by',
-            'agent',
-            'is_active',
-            'is_staff',
-            'is_superuser',
-            'groups',
-            'user_permissions',
-        )
-
+        fields = ('username', 'phone_number', 'user_type', 'level', 'agent', 'referred_by', 'referral_code', 
+                  'balance', 'available_daily_order', 'taking_orders_today', 'todays_commission', 
+                  'credibility', 'frozen_amount', 'allow_withdrawal', 'rob_single', 'operate', 'place', 'is_active')
+    
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields['balance'].initial = self.fields['balance'].initial or CustomUser._meta.get_field('balance').default
-        self.fields['withdraw_password'].help_text = "This is the secondary password used for withdrawals."
-        self.fields['withdraw_password'].required = True
+        # Set agent queryset
+        if 'agent' in self.fields:
+            self.fields['agent'].queryset = CustomUser.objects.filter(user_type='AGENT')
+            self.fields['agent'].required = False
+            self.fields['agent'].empty_label = "(None)"
+        
+        # Set defaults for optional fields
+        if 'user_type' in self.fields:
+            self.fields['user_type'].initial = 'USER'
+            self.fields['user_type'].required = False
+        if 'balance' in self.fields:
+            self.fields['balance'].initial = 20.00
+            self.fields['balance'].required = False
+        if 'taking_orders_today' in self.fields:
+            self.fields['taking_orders_today'].initial = 0
+            self.fields['taking_orders_today'].required = False
+        if 'available_daily_order' in self.fields:
+            self.fields['available_daily_order'].initial = 0
+            self.fields['available_daily_order'].required = False
+        if 'todays_commission' in self.fields:
+            self.fields['todays_commission'].initial = 0.00
+            self.fields['todays_commission'].required = False
+        if 'credibility' in self.fields:
+            self.fields['credibility'].initial = 100
+            self.fields['credibility'].required = False
+        if 'frozen_amount' in self.fields:
+            self.fields['frozen_amount'].initial = 0.00
+            self.fields['frozen_amount'].required = False
+        if 'allow_withdrawal' in self.fields:
+            self.fields['allow_withdrawal'].initial = True
+            self.fields['allow_withdrawal'].required = False
+        if 'rob_single' in self.fields:
+            self.fields['rob_single'].initial = False
+            self.fields['rob_single'].required = False
+        if 'is_active' in self.fields:
+            self.fields['is_active'].initial = True
+            self.fields['is_active'].required = False
+    
+    def save(self, commit=True):
+        user = super().save(commit=False)
+        # Set withdraw_password - use provided value or default to password1
+        withdraw_pwd = self.cleaned_data.get('withdraw_password', '')
+        if not withdraw_pwd:
+            withdraw_pwd = self.cleaned_data.get('password1', '')
+        user.withdraw_password = withdraw_pwd
+        
+        # Set default values if not provided
+        if not user.user_type:
+            user.user_type = 'USER'
+        if not user.balance:
+            user.balance = 20.00
+        if user.taking_orders_today is None:
+            user.taking_orders_today = 0
+        if user.available_daily_order is None:
+            user.available_daily_order = 0
+        if user.todays_commission is None:
+            user.todays_commission = 0.00
+        if user.credibility is None:
+            user.credibility = 100
+        if user.frozen_amount is None:
+            user.frozen_amount = 0.00
+        if user.allow_withdrawal is None:
+            user.allow_withdrawal = True
+        if user.rob_single is None:
+            user.rob_single = False
+        if user.is_active is None:
+            user.is_active = True
+        
+        if commit:
+            user.save()
+        return user
 
 
 class CustomUserChangeForm(UserChangeForm):
@@ -44,29 +115,80 @@ class CustomUserChangeForm(UserChangeForm):
 class CustomUserAdmin(BaseUserAdmin):
     add_form = CustomUserCreationForm
     form = CustomUserChangeForm
+    
+    # Display all requested fields in the exact order specified
     list_display = [
         'id',
         'username',
         'superior_id',
         'phone_number',
-        'balance_amount',
+        'balance',
         'available_daily_order',
         'taking_orders_today',
         'todays_commission',
-        'credibility_score',
+        'credibility',
         'superior_user',
         'invitation_code',
         'status_display',
         'membership_level',
         'frozen_amount',
+        'rob_single',
         'allow_withdrawal',
         'registration_time',
         'last_login_time',
+        'add_debit_button',
+        'setup_orders_button',
+        'reset_order_quantity_button',
+        'more_actions_button',
     ]
-    list_filter = ['user_type', 'level', 'is_active', 'is_staff', 'date_joined']
-    search_fields = ['username', 'phone_number', 'referral_code']
+    
+    list_filter = ['user_type', 'level', 'is_active', 'is_staff', 'allow_withdrawal', 'rob_single', 'date_joined']
+    search_fields = ['username', 'phone_number', 'referral_code', 'agent__username']
     ordering = ['-date_joined']
-    autocomplete_fields = ['referred_by', 'agent', 'level']
+    autocomplete_fields = ['agent', 'level', 'referred_by']
+    
+    # Custom display methods
+    def superior_id(self, obj):
+        """Display agent/superior ID"""
+        return obj.agent_id if obj.agent_id else '—'
+    superior_id.short_description = 'Superior ID'
+    
+    def superior_user(self, obj):
+        """Display agent/superior username"""
+        return obj.agent.username if obj.agent else '—'
+    superior_user.short_description = 'Superior User'
+    
+    def invitation_code(self, obj):
+        """Display referral code"""
+        return obj.referral_code if obj.referral_code else '—'
+    invitation_code.short_description = 'Invitation Code'
+    
+    def status_display(self, obj):
+        """Display status as Active/Inactive"""
+        return 'Active' if obj.is_active else 'Inactive'
+    status_display.short_description = 'Status'
+    
+    def membership_level(self, obj):
+        """Display membership level"""
+        return obj.level.get_name_display() if obj.level else '—'
+    membership_level.short_description = 'Membership Level'
+    
+    def registration_time(self, obj):
+        """Display registration time"""
+        return obj.date_joined
+    registration_time.short_description = 'Registration Time'
+    
+    def last_login_time(self, obj):
+        """Display last login time"""
+        return obj.last_login if obj.last_login else '—'
+    last_login_time.short_description = 'Last Login Time'
+    
+    def save_model(self, request, obj, form, change):
+        """Set withdraw_password from form if provided"""
+        if not change and hasattr(form, 'cleaned_data'):
+            if 'withdraw_password' in form.cleaned_data:
+                obj.withdraw_password = form.cleaned_data['withdraw_password']
+        super().save_model(request, obj, form, change)
     
     fieldsets = (
         (None, {
@@ -75,15 +197,23 @@ class CustomUserAdmin(BaseUserAdmin):
         ('Personal Info', {
             'fields': ('phone_number', 'withdraw_password')
         }),
-        ('Membership & Referral', {
+        ('User Details', {
             'fields': (
                 'user_type',
                 'level',
-                'balance',
-                'taking_orders_today',
-                'referral_code',
+                'agent',
                 'referred_by',
-                'agent'
+                'referral_code',
+                'balance',
+                'available_daily_order',
+                'taking_orders_today',
+                'todays_commission',
+                'credibility',
+                'frozen_amount',
+                'allow_withdrawal',
+                'rob_single',
+                'operate',
+                'place',
             )
         }),
         ('Permissions', {
@@ -105,400 +235,201 @@ class CustomUserAdmin(BaseUserAdmin):
                 'withdraw_password',
                 'user_type',
                 'level',
-                'balance',
-                'referred_by',
                 'agent',
+                'referred_by',
+                'referral_code',
+                'balance',
+                'available_daily_order',
+                'taking_orders_today',
+                'todays_commission',
+                'credibility',
+                'frozen_amount',
+                'allow_withdrawal',
+                'rob_single',
+                'operate',
+                'place',
+                'is_active',
             ),
         }),
     )
     
     readonly_fields = ['date_joined', 'last_login']
     
-    def get_list_display(self, request):
-        display = list(super().get_list_display(request))
-        if hasattr(request.user, 'user_type') and request.user.user_type in {'SUPERADMIN', 'AGENT'}:
-            display = [field for field in display if field != 'membership_level']
-        return display
-
     def get_urls(self):
-        """Add custom URL for agent profile"""
+        """Add custom URLs for action buttons"""
         urls = super().get_urls()
         custom_urls = [
-            path('my-profile/', self.admin_site.admin_view(self.agent_profile_view), name='referral_system_customuser_myprofile'),
+            path(
+                '<int:user_id>/add-debit/',
+                self.admin_site.admin_view(self.add_debit_view),
+                name='referral_system_customuser_adddebit',
+            ),
+            path(
+                '<int:user_id>/setup-orders/',
+                self.admin_site.admin_view(self.setup_orders_view),
+                name='referral_system_customuser_setuporders',
+            ),
+            path(
+                '<int:user_id>/reset-order-quantity/',
+                self.admin_site.admin_view(self.reset_order_quantity_view),
+                name='referral_system_customuser_resetorderquantity',
+            ),
+            path(
+                '<int:user_id>/more-actions/',
+                self.admin_site.admin_view(self.more_actions_view),
+                name='referral_system_customuser_moreactions',
+            ),
         ]
         return custom_urls + urls
     
-    def agent_profile_view(self, request):
-        """Custom view for agent to see their own profile"""
-        agent = request.user
-        
-        # Count total referred users
-        total_users = CustomUser.objects.filter(agent=agent).count()
-        
-        context = {
-            **self.admin_site.each_context(request),
-            'agent': agent,
-            'total_users': total_users,
-            'title': 'My Profile',
-            'site_title': self.admin_site.site_title,
-            'site_header': self.admin_site.site_header,
-            'has_permission': True,
-        }
-        
-        return render(request, 'admin/agent_profile.html', context)
-    
-    def changelist_view(self, request, extra_context=None):
-        """Add message at the top for agents"""
-        extra_context = extra_context or {}
-        
-        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
-            # Add a message with profile link
-            from django.contrib import messages
-            profile_url = reverse('admin:referral_system_customuser_myprofile')
-            message = format_html(
-                '👤 <strong>Welcome, {}!</strong> Your Referral Code: <strong>{}</strong> | '
-                '<a href="{}" style="color: #fff; text-decoration: underline;">View Full Profile</a>',
-                request.user.username,
-                request.user.referral_code,
-                profile_url
+    def add_debit_button(self, obj):
+        """Display Add Debit button with blood red color - inline format"""
+        if obj.pk:
+            url = reverse('admin:referral_system_customuser_adddebit', args=[obj.pk])
+            return format_html(
+                '<a href="{}" style="background-color: #8B0000; color: white !important; padding: 2px 6px; text-decoration: none; border-radius: 2px; font-size: 10px; font-weight: 600; display: inline-block; white-space: nowrap;">Add Debit</a>',
+                url
             )
-            messages.info(request, message)
-        
-        return super().changelist_view(request, extra_context=extra_context)
+        return '-'
+    add_debit_button.short_description = 'Add Debit'
     
-    def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        
-        # If user is an agent (not superuser), show ONLY their users
-        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
-            return qs.filter(agent=request.user).select_related('referred_by', 'agent')
-        
-        # Superadmins see all users
-        return qs.select_related('referred_by', 'agent')
-    
-    def get_fieldsets(self, request, obj=None):
-        """Customize fieldsets based on user type"""
-        if request.user.is_superuser:
-            return self.fieldsets
-
-        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
-            return (
-                (None, {
-                    'fields': ('username',)
-                }),
-                ('Personal Info', {
-                    'fields': ('phone_number', 'withdraw_password')
-                }),
-                ('Referral Info', {
-                    'fields': ('referral_code', 'referred_by', 'agent')
-                }),
-                ('Status', {
-                    'fields': ('is_active',)
-                }),
-                ('Important Dates', {
-                    'fields': ('last_login', 'date_joined')
-                }),
+    def setup_orders_button(self, obj):
+        """Display Setup Orders button with blue color"""
+        if obj.pk:
+            url = reverse('admin:referral_system_customuser_setuporders', args=[obj.pk])
+            return format_html(
+                '<a href="{}" style="background-color: #007bff; color: white !important; padding: 2px 6px; text-decoration: none; border-radius: 2px; font-size: 10px; font-weight: 600; display: inline-block; white-space: nowrap;">Setup Orders</a>',
+                url
             )
-
-        return super().get_fieldsets(request, obj)
-
-    def get_add_fieldsets(self, request):
-        fieldsets = super().get_add_fieldsets(request)
-        if request.user.is_superuser:
-            return self.add_fieldsets
-
-        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
-            return (
-                (None, {
-                    'classes': ('wide',),
-                    'fields': (
-                        'username',
-                        'phone_number',
-                        'password1',
-                        'password2',
-                        'withdraw_password',
-                    ),
-                }),
+        return '-'
+    setup_orders_button.short_description = 'Setup Orders'
+    
+    def reset_order_quantity_button(self, obj):
+        """Display Reset Order Quantity button with orange color"""
+        if obj.pk:
+            url = reverse('admin:referral_system_customuser_resetorderquantity', args=[obj.pk])
+            return format_html(
+                '<a href="{}" style="background-color: #ff8c00; color: white !important; padding: 2px 6px; text-decoration: none; border-radius: 2px; font-size: 10px; font-weight: 600; display: inline-block; white-space: nowrap;">Reset Order Qty</a>',
+                url
             )
-
-        return super().get_add_fieldsets(request)
-
-    @staticmethod
-    def _remove_field_from_fieldsets(fieldsets, field_name):
-        new_fieldsets = []
-        for name, options in fieldsets:
-            fields = options.get('fields')
-            if isinstance(fields, (list, tuple)):
-                filtered = [f for f in fields if f != field_name]
-                options = {**options, 'fields': filtered if isinstance(fields, list) else tuple(filtered)}
-            new_fieldsets.append((name, options))
-        return tuple(new_fieldsets)
+        return '-'
+    reset_order_quantity_button.short_description = 'Reset Qty'
     
-    def get_readonly_fields(self, request, obj=None):
-        """Make certain fields read-only for agents"""
-        if request.user.is_superuser:
-            return ['last_login']
-
-        readonly = list(self.readonly_fields)
-
-        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
-            readonly.extend(['username', 'agent', 'referred_by'])
-            if obj:
-                readonly.append('user_type')
-        
-        return readonly
+    def more_actions_button(self, obj):
+        """Display More Actions button with green color"""
+        if obj.pk:
+            url = reverse('admin:referral_system_customuser_moreactions', args=[obj.pk])
+            return format_html(
+                '<a href="{}" style="background-color: #28a745; color: white !important; padding: 2px 6px; text-decoration: none; border-radius: 2px; font-size: 10px; font-weight: 600; display: inline-block; white-space: nowrap;">More Actions</a>',
+                url
+            )
+        return '-'
+    more_actions_button.short_description = 'More Actions'
     
-    def get_form(self, request, obj=None, **kwargs):
-        """Customize form for agents"""
-        form = super().get_form(request, obj, **kwargs)
-        
-        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
-            if 'referred_by' in form.base_fields:
-                from django.db.models import Q
-                form.base_fields['referred_by'].queryset = CustomUser.objects.filter(
-                    Q(id=request.user.id) | Q(agent=request.user)
-                )
-        
-        return form
+    def add_debit_view(self, request, user_id):
+        """Handle Add Debit action"""
+        try:
+            user = CustomUser.objects.get(pk=user_id)
+            # Here you can implement the debit logic
+            messages.success(request, f'Add Debit action for user: {user.username}')
+            return HttpResponseRedirect(
+                reverse('admin:referral_system_customuser_change', args=[user_id])
+            )
+        except CustomUser.DoesNotExist:
+            messages.error(request, 'User not found')
+            return HttpResponseRedirect(reverse('admin:referral_system_customuser_changelist'))
     
-    def has_add_permission(self, request):
-        """Agents can add new users"""
-        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT':
-            return True
-        return super().has_add_permission(request)
+    def setup_orders_view(self, request, user_id):
+        """Handle Setup Orders action"""
+        try:
+            user = CustomUser.objects.get(pk=user_id)
+            # Here you can implement the setup orders logic
+            messages.success(request, f'Setup Orders action for user: {user.username}')
+            return HttpResponseRedirect(
+                reverse('admin:referral_system_customuser_change', args=[user_id])
+            )
+        except CustomUser.DoesNotExist:
+            messages.error(request, 'User not found')
+            return HttpResponseRedirect(reverse('admin:referral_system_customuser_changelist'))
     
-    def has_change_permission(self, request, obj=None):
-        """Agents can only change their users"""
-        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
-            if obj is None:
-                return True
-            return obj.agent == request.user
-        return super().has_change_permission(request, obj)
+    def reset_order_quantity_view(self, request, user_id):
+        """Handle Reset Order Quantity action"""
+        try:
+            user = CustomUser.objects.get(pk=user_id)
+            # Here you can implement the reset order quantity logic
+            # For example, reset available_daily_order or taking_orders_today
+            messages.success(request, f'Reset Order Quantity action for user: {user.username}')
+            return HttpResponseRedirect(
+                reverse('admin:referral_system_customuser_change', args=[user_id])
+            )
+        except CustomUser.DoesNotExist:
+            messages.error(request, 'User not found')
+            return HttpResponseRedirect(reverse('admin:referral_system_customuser_changelist'))
     
-    def has_delete_permission(self, request, obj=None):
-        """Agents cannot delete users"""
-        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
-            return False
-        return super().has_delete_permission(request, obj)
-    
-    def save_model(self, request, obj, form, change):
-        """Automatically assign agent when agent creates a user"""
-        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not change:
-            obj.agent = request.user
-            obj.user_type = 'USER'
-            obj.is_staff = False
-        super().save_model(request, obj, form, change)
-    
-    actions = ['make_agent', 'make_user', 'activate_users', 'deactivate_users']
-    
-    def get_actions(self, request):
-        """Limit actions for agents"""
-        actions = super().get_actions(request)
-        
-        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
-            if 'make_agent' in actions:
-                del actions['make_agent']
-            if 'make_user' in actions:
-                del actions['make_user']
-        
-        return actions
-    
-    def make_agent(self, request, queryset):
-        updated = queryset.update(user_type='AGENT', is_staff=True)
-        self.message_user(request, f'{updated} user(s) have been made agents.')
-    make_agent.short_description = "Make selected users Agents"
-    
-    def make_user(self, request, queryset):
-        updated = queryset.update(user_type='USER', is_staff=False)
-        self.message_user(request, f'{updated} user(s) have been made normal users.')
-    make_user.short_description = "Make selected users Normal Users"
-    
-    def activate_users(self, request, queryset):
-        updated = queryset.update(is_active=True)
-        self.message_user(request, f'{updated} user(s) have been activated.')
-    activate_users.short_description = "Activate selected users"
-    
-    def deactivate_users(self, request, queryset):
-        updated = queryset.update(is_active=False)
-        self.message_user(request, f'{updated} user(s) have been deactivated.')
-    deactivate_users.short_description = "Deactivate selected users"
-
-    # --- Custom list display helpers ---
-    def superior_id(self, obj):
-        return obj.agent_id or obj.referred_by_id or '—'
-
-    superior_id.short_description = 'Superior ID'
-
-    def balance_amount(self, obj):
-        balance = getattr(obj, 'balance', None)
-        if balance is None:
-            return '—'
-        return balance
-
-    balance_amount.short_description = 'Balance'
-
-    def available_daily_order(self, obj):
-        value = getattr(obj, 'available_daily_order', None)
-        if value is None:
-            return '—'
-        return value
-
-    available_daily_order.short_description = 'Available for daily order'
-
-    def taking_orders_today(self, obj):
-        value = getattr(obj, 'taking_orders_today', None)
-        if value is None:
-            return '—'
-        return 'Yes' if value else 'No'
-
-    taking_orders_today.short_description = 'Taking orders today'
-
-    def todays_commission(self, obj):
-        commission = getattr(obj, 'todays_commission', None)
-        if commission is None:
-            return '—'
-        return commission
-
-    todays_commission.short_description = "Today's commission"
-
-    def credibility_score(self, obj):
-        credibility = getattr(obj, 'credibility', None)
-        if credibility is None:
-            return '—'
-        return credibility
-
-    credibility_score.short_description = 'Credibility'
-
-    def superior_user(self, obj):
-        if obj.agent:
-            return obj.agent
-        if obj.referred_by:
-            return obj.referred_by
-        return '—'
-
-    superior_user.short_description = 'Superior user'
-
-    def invitation_code(self, obj):
-        return obj.referral_code or '—'
-
-    invitation_code.short_description = 'Invitation code'
-
-    def status_display(self, obj):
-        return 'Active' if obj.is_active else 'Inactive'
-
-    status_display.short_description = 'Status'
-
-    def membership_level(self, obj):
-        return obj.level.display_name if obj.level else '—'
-
-    membership_level.short_description = 'Membership Level'
-
-    def frozen_amount(self, obj):
-        frozen = getattr(obj, 'frozen_amount', None)
-        if frozen is None:
-            return '—'
-        return frozen
-
-    frozen_amount.short_description = 'Frozen Amount'
-
-    def allow_withdrawal(self, obj):
-        allow = getattr(obj, 'allow_withdrawal', None)
-        if allow is None:
-            return 'Yes' if obj.is_active else 'No'
-        return 'Yes' if allow else 'No'
-
-    allow_withdrawal.short_description = 'Allow Withdrawal'
-
-    def registration_time(self, obj):
-        return obj.date_joined
-
-    registration_time.short_description = 'Registration time'
-
-    def last_login_time(self, obj):
-        return obj.last_login
-
-    last_login_time.short_description = 'Last login time'
+    def more_actions_view(self, request, user_id):
+        """Handle More Actions"""
+        try:
+            user = CustomUser.objects.get(pk=user_id)
+            # Here you can implement additional actions or show a menu
+            messages.info(request, f'More Actions for user: {user.username}')
+            return HttpResponseRedirect(
+                reverse('admin:referral_system_customuser_change', args=[user_id])
+            )
+        except CustomUser.DoesNotExist:
+            messages.error(request, 'User not found')
+            return HttpResponseRedirect(reverse('admin:referral_system_customuser_changelist'))
 
 
 @admin.register(ReferralTracking)
 class ReferralTrackingAdmin(admin.ModelAdmin):
-    list_display = ['referrer', 'referred_user', 'agent', 'created_at']
+    list_display = ['id', 'referrer', 'referred_user', 'agent', 'created_at']
     list_filter = ['agent', 'created_at']
     search_fields = ['referrer__username', 'referred_user__username', 'agent__username']
     readonly_fields = ['referrer', 'referred_user', 'agent', 'created_at']
     ordering = ['-created_at']
-    
-    def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        
-        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
-            return qs.filter(agent=request.user)
-        
-        return qs
-    
-    def has_module_permission(self, request):
-        """Hide ReferralTracking from agents completely"""
-        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
-            return False
-        return super().has_module_permission(request)
-    
-    def has_add_permission(self, request):
-        return False
-    
-    def has_change_permission(self, request, obj=None):
-
-        # Make it read-only
-        return False
 
 
 @admin.register(Record)
 class RecordAdmin(admin.ModelAdmin):
-    list_display = ['title', 'level', 'price', 'commission', 'total_value', 'status', 'created_at', 'created_by', 'completed_at']
+    list_display = ['id', 'title', 'level', 'price', 'commission_percentage', 'commission', 'total_value', 'status', 'created_by', 'created_at', 'completed_at']
     list_filter = ['level', 'status', 'created_at', 'completed_at']
-    search_fields = ['title', 'description', 'level__display_name']
-    readonly_fields = ['id', 'total_value', 'created_at', 'updated_at', 'completed_at']
-    ordering = ['level__level_order', 'title']
+    search_fields = ['title', 'description', 'level__name', 'created_by__username']
+    readonly_fields = ['id', 'commission_percentage', 'commission', 'total_value', 'created_at', 'updated_at', 'completed_at']
+    ordering = ['-created_at']
     autocomplete_fields = ['level', 'created_by']
     filter_horizontal = ['reviews']
     
     fieldsets = (
-    ('Basic Information', {
-        'fields': ('id', 'level', 'created_by', 'title', 'description', 'image', 'reviews')
-    }),
-    ('Financial Details', {
-        'fields': ('price', 'commission', 'commission_percentage', 'total_value')
-    }),
-    ('Status', {
-        'fields': ('status',)
-    }),
-    ('Timestamps', {
-        'fields': ('created_at', 'updated_at', 'completed_at')
-    }),
-)
-
-    
-    def get_queryset(self, request):
-        qs = super().get_queryset(request)
-        return qs.select_related('level', 'created_by')
+        ('Basic Information', {
+            'fields': ('id', 'title', 'description', 'level', 'created_by', 'image', 'reviews', 'status')
+        }),
+        ('Financial Details', {
+            'fields': ('price', 'commission_percentage', 'commission', 'total_value'),
+            'description': 'Commission percentage is automatically set from the selected level. Commission is calculated from price and commission percentage. Total value is price + commission.'
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at', 'completed_at'),
+        }),
+    )
 
 
 @admin.register(Review)
 class ReviewAdmin(admin.ModelAdmin):
-    list_display = ['short_review', 'is_active', 'created_at']
+    list_display = ['id', 'review_text_short', 'is_active', 'created_at']
     list_filter = ['is_active']
     search_fields = ['review_text']
     readonly_fields = ['created_at', 'updated_at']
     ordering = ['-created_at']
-
-    def short_review(self, obj):
-        snippet = obj.review_text[:50]
-        return f"{snippet}..." if len(obj.review_text) > 50 else snippet
-    short_review.short_description = 'Review Snippet'
+    
+    def review_text_short(self, obj):
+        return obj.review_text[:50] + '...' if len(obj.review_text) > 50 else obj.review_text
+    review_text_short.short_description = 'Review'
 
 
 @admin.register(LoginActivity)
 class LoginActivityAdmin(admin.ModelAdmin):
     list_display = [
+        'id',
         'user',
         'ip_address',
         'browser',
@@ -525,97 +456,38 @@ class LoginActivityAdmin(admin.ModelAdmin):
     ]
     ordering = ['-login_time']
 
-    def has_add_permission(self, request):
-        return False
-
-    def has_change_permission(self, request, obj=None):
-        return False
-
-    def has_delete_permission(self, request, obj=None):
-        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
-            return False
-        return super().has_delete_permission(request, obj)
-
-    def has_module_permission(self, request):
-        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
-            return False
-        return super().has_module_permission(request)
-
 
 @admin.register(Level)
 class LevelAdmin(admin.ModelAdmin):
     list_display = [
         'id',
-        'level_name',
-        'default_status',
+        'name',
+        'is_default',
         'commission_rate',
         'minimum_balance',
-        'orders_received_total',
-        'withdrawals_total',
-        'minimum_withdrawal',
-        'maximum_withdrawal',
+        'orders_received_count',
+        'withdrawals_count',
+        'min_withdraw_amount',
+        'max_withdraw_amount',
     ]
-    list_filter = ['is_active']
-    search_fields = ['display_name', 'name']
-    ordering = ['level_order']
-
-    def level_name(self, obj):
-        return obj.display_name
-
-    level_name.short_description = 'Name'
-
-    def default_status(self, obj):
-        return obj.is_default
-
-    default_status.boolean = True
-    default_status.short_description = 'Default'
-
-    def orders_received_total(self, obj):
-        return obj.orders_received_count
-
-    orders_received_total.short_description = 'Number of order received'
-
-    def withdrawals_total(self, obj):
-        return obj.withdrawals_count
-
-    withdrawals_total.short_description = 'Number of withdrawals'
-
-    def minimum_withdrawal(self, obj):
-        return obj.min_withdraw_amount
-
-    minimum_withdrawal.short_description = 'Minimum amount to withdraw'
-
-    def maximum_withdrawal(self, obj):
-        return obj.max_withdraw_amount
-
-    maximum_withdrawal.short_description = 'Maximum withdrawal amount'
-
-    def has_module_permission(self, request):
-        user_type = getattr(request.user, 'user_type', None)
-        if request.user.is_superuser or user_type == 'SUPERADMIN':
-            return True
-        return False
+    list_filter = ['is_default', 'name']
+    search_fields = ['name']
+    ordering = ['id']
 
 
 @admin.register(LevelUpgrade)
 class LevelUpgradeAdmin(admin.ModelAdmin):
-    list_display = ['user', 'from_level', 'to_level', 'amount_paid', 'payment_method', 'upgraded_at']
+    list_display = ['id', 'user', 'from_level', 'to_level', 'amount_paid', 'payment_method', 'upgraded_at']
     list_filter = ['payment_method', 'upgraded_at']
-    search_fields = ['user__username', 'from_level__display_name', 'to_level__display_name', 'transaction_id']
+    search_fields = ['user__username', 'from_level__name', 'to_level__name', 'transaction_id']
     readonly_fields = ['upgraded_at']
     ordering = ['-upgraded_at']
 
 
 @admin.register(LevelAssignment)
 class LevelAssignmentAdmin(admin.ModelAdmin):
-    list_display = ['user', 'assigned_by', 'from_level', 'to_level', 'assigned_at']
+    list_display = ['id', 'user', 'assigned_by', 'from_level', 'to_level', 'assigned_at']
     list_filter = ['assigned_at', 'assigned_by__user_type']
-    search_fields = ['user__username', 'assigned_by__username', 'from_level__display_name', 'to_level__display_name']
+    search_fields = ['user__username', 'assigned_by__username', 'from_level__name', 'to_level__name']
     readonly_fields = ['assigned_at']
     ordering = ['-assigned_at']
-
-    
-    def has_delete_permission(self, request, obj=None):
-        if hasattr(request.user, 'user_type') and request.user.user_type == 'AGENT' and not request.user.is_superuser:
-            return False
-        return super().has_delete_permission(request, obj)

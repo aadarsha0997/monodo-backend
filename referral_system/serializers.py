@@ -152,9 +152,8 @@ class UserSerializer(serializers.ModelSerializer):
         return {
             'id': str(level.id),
             'name': level.name,
-            'display_name': level.display_name,
+            'display_name': level.get_name_display(),
             'commission_rate': str(level.commission_rate),
-            'image_upload_limit': level.image_upload_limit,
             'min_withdraw_amount': str(level.min_withdraw_amount),
             'max_withdraw_amount': str(level.max_withdraw_amount),
         }
@@ -287,8 +286,7 @@ class UserRecordSerializer(serializers.ModelSerializer):
         return {
             'id': str(level.id),
             'name': level.name,
-            'display_name': level.display_name,
-            'image_upload_limit': level.image_upload_limit,
+            'display_name': level.get_name_display(),
             'commission_rate': str(level.commission_rate),
         }
 

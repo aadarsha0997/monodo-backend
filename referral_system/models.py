@@ -66,17 +66,9 @@ class Level(models.Model):
     
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=20, choices=LEVEL_CHOICES, unique=True)
-    display_name = models.CharField(max_length=50)
-    description = models.TextField(blank=True, null=True)
     is_default = models.BooleanField(
         default=False,
         help_text="Mark this level as the default assigned to new members"
-    )
-    
-    # Benefits
-    image_upload_limit = models.IntegerField(
-        default=10,
-        help_text="Number of images user can upload per record"
     )
     commission_rate = models.DecimalField(
         max_digits=5,
@@ -84,13 +76,19 @@ class Level(models.Model):
         default=Decimal('5.00'),
         help_text="Commission percentage (e.g., 7.00 for 7%)"
     )
-    
-    # Financial thresholds
     minimum_balance = models.DecimalField(
         max_digits=12,
         decimal_places=2,
         default=Decimal('0.00'),
         help_text="Minimum balance required to maintain this level"
+    )
+    orders_received_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of orders received while at this level"
+    )
+    withdrawals_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of withdrawals made while at this level"
     )
     min_withdraw_amount = models.DecimalField(
         max_digits=12,
@@ -105,46 +103,13 @@ class Level(models.Model):
         help_text="Maximum amount a member can withdraw at once (0 means no limit)"
     )
     
-    # Activity counters
-    orders_received_count = models.PositiveIntegerField(
-        default=0,
-        help_text="Number of orders received while at this level"
-    )
-    withdrawals_count = models.PositiveIntegerField(
-        default=0,
-        help_text="Number of withdrawals made while at this level"
-    )
-    
-    # Pricing
-    upgrade_price = models.DecimalField(
-        max_digits=10,
-        decimal_places=2,
-        default=Decimal('0.00'),
-        help_text="Price to upgrade to this level (0 for free/default level)"
-    )
-    
-    # Additional features
-    priority_support = models.BooleanField(default=False, help_text="Get priority customer support")
-    featured_listing = models.BooleanField(default=False, help_text="Records appear as featured")
-    max_records_per_month = models.IntegerField(default=100, help_text="Maximum records per month")
-    
-    # Level order (for upgrades)
-    level_order = models.IntegerField(default=0, help_text="Higher number = higher tier (1=Basic, 2=Gold, etc)")
-    
-    # Icon/Badge for display
-    icon_url = models.URLField(max_length=500, blank=True, null=True, help_text="URL for level badge/icon")
-    
-    is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
     DEFAULT_LEVEL_NAME = 'BASIC'
 
     class Meta:
         db_table = 'levels'
         verbose_name = 'Level'
         verbose_name_plural = 'Levels'
-        ordering = ['level_order']
+        ordering = ['id']
     
     def clean(self):
         super().clean()
@@ -157,29 +122,17 @@ class Level(models.Model):
             raise ValidationError("Maximum withdrawal amount cannot be less than minimum withdrawal amount.")
 
     def __str__(self):
-        return f"{self.display_name} (Images: {self.image_upload_limit}, Commission: {self.commission_rate}%)"
+        return f"{self.get_name_display()} (Commission: {self.commission_rate}%)"
 
     @classmethod
     def get_default_level(cls):
-        level = (
-            cls.objects.filter(is_default=True, is_active=True)
-            .order_by('level_order')
-            .first()
-        )
+        level = cls.objects.filter(is_default=True).order_by('id').first()
         if level:
             return level
-        level = (
-            cls.objects.filter(name=cls.DEFAULT_LEVEL_NAME, is_active=True)
-            .order_by('level_order')
-            .first()
-        )
+        level = cls.objects.filter(name=cls.DEFAULT_LEVEL_NAME).order_by('id').first()
         if level:
             return level
-        return (
-            cls.objects.filter(is_active=True)
-            .order_by('level_order')
-            .first()
-        )
+        return cls.objects.order_by('id').first()
 
     @classmethod
     def get_default_level_id(cls):
@@ -237,6 +190,48 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     taking_orders_today = models.PositiveIntegerField(default=0)
     balance = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('20.00'))
     
+    # Additional user fields
+    available_daily_order = models.PositiveIntegerField(
+        default=0,
+        help_text="Available orders for today"
+    )
+    todays_commission = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Commission earned today"
+    )
+    credibility = models.IntegerField(
+        default=100,
+        help_text="Credibility score (0-100)"
+    )
+    frozen_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=Decimal('0.00'),
+        help_text="Amount frozen/held"
+    )
+    allow_withdrawal = models.BooleanField(
+        default=True,
+        help_text="Whether user is allowed to withdraw"
+    )
+    rob_single = models.BooleanField(
+        default=False,
+        help_text="Rob Single status"
+    )
+    operate = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Operation details"
+    )
+    place = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Place/Location"
+    )
+    
     # Bank account details for withdrawals
     bank_account_number = models.CharField(max_length=50, blank=True, null=True)
     bank_account_holder_name = models.CharField(max_length=255, blank=True, null=True)
@@ -264,143 +259,80 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         verbose_name = 'User'
         verbose_name_plural = 'Users'
 
-    def __str__(self):
-        level_name = self.level.display_name if self.level else 'No Level'
-        return f"{self.username} ({self.get_user_type_display()}) - {level_name}"
+    def generate_referral_code(self):
+        """Generate a unique referral code"""
+        if self.referral_code:
+            return  # Don't regenerate if code already exists
+        
+        length = 8
+        max_attempts = 100
+        
+        for _ in range(max_attempts):
+            # Generate code using uppercase letters and numbers
+            code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
+            
+            # Check if code is unique (exclude current user if updating)
+            queryset = CustomUser.objects.filter(referral_code=code)
+            if self.pk:
+                queryset = queryset.exclude(pk=self.pk)
+            
+            if not queryset.exists():
+                self.referral_code = code
+                return
+        
+        # Fallback: use user ID with random suffix if all attempts fail
+        # This should rarely happen, but ensures we always have a code
+        random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+        # If no ID yet, use a random number
+        if self.pk:
+            self.referral_code = f"{self.pk}{random_suffix}"
+        else:
+            # For new users, this will be set after save
+            pass
 
     def save(self, *args, **kwargs):
-        # Generate referral code if not exists
-        if not self.referral_code:
-            self.referral_code = self.generate_referral_code()
-
-        # Ensure default level is set
-        if not self.level:
-            default_level = Level.get_default_level()
-            if default_level:
-                self.level = default_level
-        
-        # Set agent and inherit level from agent
-        if self.referred_by and not self.agent:
-            if self.referred_by.user_type == 'AGENT':
-                self.agent = self.referred_by
-                # Inherit level from agent if user doesn't have one
-                if not self.level and self.agent.level:
-                    self.level = self.agent.level
-            elif self.referred_by.user_type == 'USER' and self.referred_by.agent:
-                self.agent = self.referred_by.agent
-                # Inherit level from agent if user doesn't have one
-                if not self.level and self.agent.level:
-                    self.level = self.agent.level
-        
         # Set is_staff for agents
         if self.user_type == 'AGENT':
             self.is_staff = True
         elif self.user_type == 'USER':
             self.is_staff = False
         
-        # Check if this is being converted to an agent
-        is_new = self.pk is None
-        was_agent = False
-        if not is_new:
+        # Check if level is being set or changed
+        level_changed = False
+        is_new_user = not self.pk
+        
+        if self.pk:
             try:
                 old_instance = CustomUser.objects.get(pk=self.pk)
-                was_agent = old_instance.user_type == 'AGENT'
+                # Check if level has changed
+                if old_instance.level != self.level:
+                    level_changed = True
             except CustomUser.DoesNotExist:
-                pass
+                is_new_user = True
         
+        # If level is selected, set available_daily_order from level's orders_received_count
+        # This happens when creating a new user with a level, or when level is changed
+        if self.level and (is_new_user or level_changed):
+            # Set available_daily_order to level's orders_received_count
+            self.available_daily_order = self.level.orders_received_count
+        
+        # Generate referral code if not set
+        if not self.referral_code:
+            self.generate_referral_code()
+        
+        # Save the user
         super().save(*args, **kwargs)
         
-        # Add permissions for agents after saving
-        if self.user_type == 'AGENT' and not self.is_superuser:
-            if is_new or not was_agent:
-                self.assign_agent_permissions()
-    
-    def assign_agent_permissions(self):
-        """Assign ONLY necessary permissions for agents to view/manage their users"""
-        from django.contrib.auth.models import Permission
-        from django.contrib.contenttypes.models import ContentType
-        
-        try:
-            # Clear all existing permissions first
-            self.user_permissions.clear()
-            
-            # Get permissions for CustomUser model - ONLY view, add, and change
-            user_ct = ContentType.objects.get_for_model(CustomUser)
-            user_permissions = Permission.objects.filter(
-                content_type=user_ct,
-                codename__in=['view_customuser', 'add_customuser', 'change_customuser']
-            )
-            
-            # Add ONLY these 3 permissions
-            if user_permissions:
-                self.user_permissions.add(*user_permissions)
-                
-        except Exception as e:
-            print(f"Could not assign permissions: {e}")
+        # If referral code still not set (fallback scenario), regenerate after getting ID
+        if not self.referral_code:
+            random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+            self.referral_code = f"{self.id}{random_suffix}"
+            CustomUser.objects.filter(pk=self.pk).update(referral_code=self.referral_code)
 
-    def assign_level(self, level, assigned_by):
-        """
-        Assign a membership level to the user.
+    def __str__(self):
+        level_name = self.level.get_name_display() if self.level else 'No Level'
+        return f"{self.username} ({self.get_user_type_display()}) - {level_name}"
 
-        Only SUPERADMIN or AGENT users can perform the assignment for normal users.
-        """
-        if assigned_by is None:
-            raise ValidationError("Assigned by user is required for level assignment.")
-
-        if assigned_by.user_type not in {'SUPERADMIN', 'AGENT'}:
-            raise ValidationError("Only SuperAdmin or Agent users can assign levels.")
-
-        if self.user_type != 'USER':
-            raise ValidationError("Only normal users can receive level assignments through this method.")
-
-        if level is not None and not level.is_active:
-            raise ValidationError("Cannot assign an inactive level.")
-
-        with transaction.atomic():
-            previous_level = self.level
-            self.level = level
-
-            # If an agent assigns the level and the user has no agent yet, link them.
-            if assigned_by.user_type == 'AGENT' and not self.agent:
-                self.agent = assigned_by
-
-            self.save(update_fields=['level', 'agent'])
-
-            LevelAssignment.objects.create(
-                user=self,
-                assigned_by=assigned_by,
-                from_level=previous_level,
-                to_level=level
-            )
-
-    @staticmethod
-    def generate_referral_code(length=8):
-        """Generate a unique referral code"""
-        while True:
-            code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
-            if not CustomUser.objects.filter(referral_code=code).exists():
-                return code
-    
-    def get_image_limit(self):
-        """Get user's image upload limit based on their level"""
-        return self.level.image_upload_limit if self.level else 10
-    
-    def get_commission_rate(self):
-        """Get user's commission rate based on their level"""
-        return self.level.commission_rate if self.level else 5.00
-    
-    def can_upload_more_images(self, current_count):
-        """Check if user can upload more images"""
-        return current_count < self.get_image_limit()
-    
-    def get_upgrade_options(self):
-        """Get available level upgrades for this user"""
-        if not self.level:
-            return Level.objects.filter(is_active=True).order_by('level_order')
-        return Level.objects.filter(
-            is_active=True,
-            level_order__gt=self.level.level_order
-        ).order_by('level_order')
 
 
 class ReferralTracking(models.Model):
@@ -509,47 +441,56 @@ class Record(models.Model):
         db_table = 'records'
         verbose_name = 'Record'
         verbose_name_plural = 'Records'
-        ordering = ['level__level_order', 'title']
+        ordering = ['level__id', 'title']
         indexes = [
             models.Index(fields=['level', 'status']),
         ]
 
-    def __str__(self):
-        level_name = self.level.display_name if self.level else 'No Level'
-        return f"{self.title} ({level_name})"
-
     def save(self, *args, **kwargs):
-        if not self.level:
-            default_level = Level.get_default_level()
-            if default_level:
-                self.level = default_level
-        if not self.commission_percentage and self.level:
+        # Check if level is being set or changed
+        level_changed = False
+        is_new_record = not self.pk
+        
+        if self.pk:
+            try:
+                old_instance = Record.objects.get(pk=self.pk)
+                # Check if level has changed
+                if old_instance.level != self.level:
+                    level_changed = True
+            except Record.DoesNotExist:
+                is_new_record = True
+        
+        # If level is selected, set commission_percentage from level's commission_rate
+        # This happens when creating a new record with a level, or when level is changed
+        if self.level and (is_new_record or level_changed or not self.commission_percentage):
+            # Set commission_percentage to level's commission_rate
             self.commission_percentage = self.level.commission_rate
-
-        if self.price is None:
-            self.price = Decimal('0.00')
-
-        if self.commission_percentage is None:
-            self.commission_percentage = Decimal('0.00')
-
-        price_decimal = Decimal(self.price)
-        commission_percentage_decimal = Decimal(self.commission_percentage)
-
-        self.commission = (
-            price_decimal * commission_percentage_decimal / Decimal('100')
-        ).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-
-        self.total_value = (
-            price_decimal + self.commission
-        ).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
-
-        if self.status == 'COMPLETED' and not self.completed_at:
-            self.completed_at = timezone.now()
-        elif self.status != 'COMPLETED':
-            self.completed_at = None
-
+        
+        # Calculate commission from price and commission_percentage
+        # commission = price * commission_percentage (commission_percentage is already a decimal, e.g., 0.08 for 8%)
+        if self.price and self.commission_percentage:
+            commission_calc = self.price * self.commission_percentage
+            # Round to 2 decimal places
+            self.commission = commission_calc.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        else:
+            self.commission = Decimal('0.00')
+        
+        # Calculate total_value (price + commission)
+        if self.price:
+            self.total_value = (self.price + (self.commission or Decimal('0.00'))).quantize(
+                Decimal('0.01'), rounding=ROUND_HALF_UP
+            )
+        else:
+            self.total_value = Decimal('0.00')
+        
+        # Save the record
         super().save(*args, **kwargs)
 
+    def __str__(self):
+        level_name = self.level.get_name_display() if self.level else 'No Level'
+        return f"{self.title} ({level_name})"
+
+    
 
 class Review(models.Model):
     """Reusable review texts that can be attached to multiple records."""
@@ -605,8 +546,8 @@ class LevelUpgrade(models.Model):
         ordering = ['-upgraded_at']
     
     def __str__(self):
-        from_name = self.from_level.display_name if self.from_level else 'None'
-        return f"{self.user.username}: {from_name} → {self.to_level.display_name}"
+        from_name = self.from_level.get_name_display() if self.from_level else 'None'
+        return f"{self.user.username}: {from_name} → {self.to_level.get_name_display()}"
 
 
 class LevelAssignment(models.Model):
@@ -648,8 +589,8 @@ class LevelAssignment(models.Model):
         ordering = ['-assigned_at']
 
     def __str__(self):
-        from_level_name = self.from_level.display_name if self.from_level else 'None'
-        to_level_name = self.to_level.display_name if self.to_level else 'None'
+        from_level_name = self.from_level.get_name_display() if self.from_level else 'None'
+        to_level_name = self.to_level.get_name_display() if self.to_level else 'None'
         assigned_by = self.assigned_by.username if self.assigned_by else 'Unknown'
         return f"{self.user.username}: {from_level_name} → {to_level_name} by {assigned_by}"
 

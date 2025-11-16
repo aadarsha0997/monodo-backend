@@ -30,3 +30,23 @@
   margin-right: 0.75rem;
 }
 
+/* Remove blue highlight from select dropdown options */
+select option {
+  background-color: #fff !important;
+  color: #495057 !important;
+}
+
+select option:checked,
+select option:focus,
+select option:hover {
+  background-color: #e9ecef !important;
+  color: #495057 !important;
+  outline: none !important;
+}
+
+select:focus {
+  outline: none !important;
+  border-color: #80bdff !important;
+  box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25) !important;
+}
+
