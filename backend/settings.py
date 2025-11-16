@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'HomePage',
     'referral_system',
+    'transactions',
     'rest_framework',
     'corsheaders',
 ]

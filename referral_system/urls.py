@@ -12,7 +12,8 @@ from .views import (
     DashboardStatsView,
     ValidateReferralCodeView,
     UserRecordImagesView,
-    RecordSubmitReviewView
+    RecordSubmitReviewView,
+    SaveBankAccountView
 )
 
 urlpatterns = [
@@ -40,4 +41,7 @@ urlpatterns = [
     # Record images
     path('records/images/', UserRecordImagesView.as_view(), name='user-record-images'),
     path('records/submit-review/', RecordSubmitReviewView.as_view(), name='record-submit-review'),
+    
+    # Bank Account
+    path('bank-account/save/', SaveBankAccountView.as_view(), name='save-bank-account'),
 ]

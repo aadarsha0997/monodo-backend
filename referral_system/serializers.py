@@ -119,6 +119,7 @@ class UserSerializer(serializers.ModelSerializer):
     agent_username = serializers.CharField(source='agent.username', read_only=True, allow_null=True)
     total_referrals = serializers.SerializerMethodField()
     level = serializers.SerializerMethodField()
+    bank_account = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomUser
@@ -135,6 +136,7 @@ class UserSerializer(serializers.ModelSerializer):
             'total_referrals',
             'taking_orders_today',
             'balance',
+            'bank_account',
             'date_joined',
             'is_active'
         ]
@@ -153,6 +155,20 @@ class UserSerializer(serializers.ModelSerializer):
             'display_name': level.display_name,
             'commission_rate': str(level.commission_rate),
             'image_upload_limit': level.image_upload_limit,
+            'min_withdraw_amount': str(level.min_withdraw_amount),
+            'max_withdraw_amount': str(level.max_withdraw_amount),
+        }
+
+    def get_bank_account(self, obj):
+        """Return bank account details if available"""
+        if not obj.bank_account_number:
+            return None
+        return {
+            'account_number': obj.bank_account_number,
+            'account_holder_name': obj.bank_account_holder_name,
+            'bank_name': obj.bank_name,
+            'routing_number': obj.bank_routing_number,
+            'account_type': obj.bank_account_type,
         }
 
 

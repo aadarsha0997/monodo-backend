@@ -483,3 +483,48 @@ class RecordSubmitReviewView(APIView):
 
         serializer = UserRecordSerializer(record, context={'request': request})
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class SaveBankAccountView(APIView):
+    """
+    API endpoint to save/update user's bank account details
+    POST /api/bank-account/save/
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        
+        account_number = request.data.get('account_number', '').strip()
+        account_holder_name = request.data.get('account_holder_name', '').strip()
+        bank_name = request.data.get('bank_name', '').strip()
+        routing_number = request.data.get('routing_number', '').strip()
+        account_type = request.data.get('account_type', 'checking')
+
+        # Validation
+        if not account_number:
+            return Response({'error': 'Account number is required'}, status=status.HTTP_400_BAD_REQUEST)
+        if not account_holder_name:
+            return Response({'error': 'Account holder name is required'}, status=status.HTTP_400_BAD_REQUEST)
+        if not bank_name:
+            return Response({'error': 'Bank name is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Save bank account details
+        user.bank_account_number = account_number
+        user.bank_account_holder_name = account_holder_name
+        user.bank_name = bank_name
+        user.bank_routing_number = routing_number or None
+        user.bank_account_type = account_type
+        user.save(update_fields=[
+            'bank_account_number',
+            'bank_account_holder_name',
+            'bank_name',
+            'bank_routing_number',
+            'bank_account_type'
+        ])
+
+        serializer = UserSerializer(user)
+        return Response({
+            'message': 'Bank account details saved successfully',
+            'bank_account': serializer.data.get('bank_account')
+        }, status=status.HTTP_200_OK)

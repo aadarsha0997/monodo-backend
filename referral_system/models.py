@@ -237,6 +237,18 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     taking_orders_today = models.PositiveIntegerField(default=0)
     balance = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('20.00'))
     
+    # Bank account details for withdrawals
+    bank_account_number = models.CharField(max_length=50, blank=True, null=True)
+    bank_account_holder_name = models.CharField(max_length=255, blank=True, null=True)
+    bank_name = models.CharField(max_length=255, blank=True, null=True)
+    bank_routing_number = models.CharField(max_length=50, blank=True, null=True)
+    bank_account_type = models.CharField(
+        max_length=20,
+        choices=[('checking', 'Checking'), ('savings', 'Savings')],
+        blank=True,
+        null=True
+    )
+    
     # Django required fields
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
